@@ -11,13 +11,25 @@
 export { resolve, resolveRef, envKey } from "./resolve.js";
 export { loadConfig, deepMerge, userConfigPath, repoConfigPath } from "./config.js";
 export { validateConfig, looksLikeSecretLiteral } from "./validate.js";
+export { authKind, authRefString, describeAuth } from "./auth.js";
+export { defaultSecretRunner } from "./secrets.js";
 export {
   generateOpencodeProviderBlock,
   mergeIntoOpencodeConfig,
   npmForKind,
   OPENCODE_FORMAT_VERSION,
 } from "./opencode.js";
-export { runDoctor, probeAnthropicCompatible } from "./doctor.js";
+export {
+  generateClaudeCodeEnv,
+  mergeIntoClaudeCodeSettings,
+  CLAUDE_CODE_FORMAT_VERSION,
+  CLAUDE_CODE_MANAGED_ENV_KEYS,
+} from "./claudecode.js";
+export {
+  runDoctor,
+  probeAnthropicCompatible,
+  probeOpenaiCompatible,
+} from "./doctor.js";
 export { DatumError } from "./errors.js";
 export type { DatumErrorCode } from "./errors.js";
 export type {
@@ -25,14 +37,22 @@ export type {
   ProviderConfig,
   ProviderKind,
   AuthRef,
+  AuthKind,
+  AuthStatus,
+  KeychainRef,
   ResolvedTarget,
   ResolvedRef,
   ResolveOptions,
 } from "./types.js";
+export type { SecretRunner } from "./secrets.js";
 export type { LoadedConfig } from "./config.js";
 export type {
   GeneratedOpencode,
   OpencodeProviderBlock,
   OpencodeProviderEntry,
 } from "./opencode.js";
+export type {
+  GeneratedClaudeCode,
+  ClaudeCodeEnvBlock,
+} from "./claudecode.js";
 export type { DoctorReport, DoctorCheck, DoctorOptions, FetchLike, CheckStatus } from "./doctor.js";

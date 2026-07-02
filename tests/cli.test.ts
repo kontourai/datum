@@ -97,3 +97,41 @@ test("cli: unknown command exits non-zero", () => {
     assert.ok(r.stderr.includes("unknown command"));
   });
 });
+
+test("cli sync claude-code --role: emits env block, key as comment only", () => {
+  withTree({ TEST_ANTHROPIC_KEY: "super-secret-value" }, (cwd, env) => {
+    const r = run(["sync", "claude-code", "--role", "worker", "--dry-run"], env, cwd);
+    assert.equal(r.status, 0);
+    assert.ok(r.stdout.includes("ANTHROPIC_MODEL"));
+    assert.ok(r.stdout.includes("claude-sonnet-5"));
+    // Key never written into the settings JSON; only referenced as a comment.
+    assert.ok(!r.stdout.includes("super-secret-value"));
+    assert.ok(r.stdout.includes("TEST_ANTHROPIC_KEY")); // named in instruction comment
+    assert.ok(r.stdout.includes("NEVER"));
+  });
+});
+
+test("cli sync claude-code: baseUrl provider sets ANTHROPIC_BASE_URL", () => {
+  withTree({ TEST_ZAI_KEY: "x" }, (cwd, env) => {
+    const r = run(["sync", "claude-code", "--role", "extraction-default", "--dry-run"], env, cwd);
+    assert.equal(r.status, 0);
+    assert.ok(r.stdout.includes("ANTHROPIC_BASE_URL"));
+    assert.ok(r.stdout.includes("https://api.z.ai/api/anthropic"));
+  });
+});
+
+test("cli sync claude-code: missing --role errors", () => {
+  withTree({}, (cwd, env) => {
+    const r = run(["sync", "claude-code", "--dry-run"], env, cwd);
+    assert.equal(r.status, 1);
+    assert.ok(r.stderr.includes("--role"));
+  });
+});
+
+test("cli sync: unknown target errors", () => {
+  withTree({}, (cwd, env) => {
+    const r = run(["sync", "frobnicate"], env, cwd);
+    assert.equal(r.status, 1);
+    assert.ok(r.stderr.includes("unknown target"));
+  });
+});

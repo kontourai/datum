@@ -1,10 +1,12 @@
 {
   "name": "@kontourai/datum",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Portfolio AI provider/model registry: define providers, models, roles once; resolve which backend, which model, whose key, what base URL. Never makes model calls.",
   "license": "MIT",
   "type": "module",
-  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/kontourai/datum.git"
@@ -31,9 +33,11 @@
   ],
   "scripts": {
     "build": "rm -rf dist && tsc",
+    "prepare": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test dist/tests/*.test.js",
-    "verify": "npm run typecheck && npm test"
+    "check:pack": "node scripts/check-package-contents.mjs",
+    "verify": "npm run typecheck && npm test && npm run check:pack"
   },
   "dependencies": {},
   "devDependencies": {
