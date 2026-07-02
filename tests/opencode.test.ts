@@ -43,3 +43,17 @@ test("merge: replaces only datum-owned provider ids, preserves the rest", () => 
   assert.equal(merged.provider.zai.npm, "@ai-sdk/anthropic"); // replaced
   assert.ok(merged.provider.anthropic); // added
 });
+
+test("generate: skips keychain/op providers (opencode env-only) with warnings", () => {
+  const { block, warnings } = generateOpencodeProviderBlock({
+    providers: {
+      envp: { kind: "anthropic-compatible", auth: { env: "OK_KEY" }, models: ["m1"] },
+      kcp: { kind: "anthropic-compatible", auth: { keychain: { service: "svc" } }, models: ["m2"] },
+      opp: { kind: "anthropic-compatible", auth: { op: "op://a/b/c" }, models: ["m3"] },
+    },
+  });
+  assert.deepEqual(Object.keys(block.provider), ["envp"]); // only env-auth provider emitted
+  assert.equal(warnings.length, 2);
+  assert.ok(warnings.some((w) => w.includes("kcp") && w.includes("keychain")));
+  assert.ok(warnings.some((w) => w.includes("opp") && w.includes("op")));
+});

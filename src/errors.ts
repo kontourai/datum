@@ -11,7 +11,9 @@ export type DatumErrorCode =
   | "AMBIGUOUS_MODEL"
   | "MISSING_ENV"
   | "INVALID_CONFIG"
-  | "SECRET_LITERAL";
+  | "SECRET_LITERAL"
+  | "SECRET_BACKEND_UNAVAILABLE"
+  | "SECRET_LOOKUP_FAILED";
 
 export class DatumError extends Error {
   readonly code: DatumErrorCode;
@@ -51,3 +53,14 @@ export const missingEnv = (envVar: string, provider: string): DatumError =>
     "MISSING_ENV",
     `Environment variable "${envVar}" (API key for provider "${provider}") is not set.`,
   );
+
+/** A secret backend's tool/platform is unavailable (e.g. keychain off darwin, op not installed). */
+export const secretBackendUnavailable = (backend: "keychain" | "op", detail: string): DatumError =>
+  new DatumError(
+    "SECRET_BACKEND_UNAVAILABLE",
+    `Secret backend "${backend}" is unavailable: ${detail}`,
+  );
+
+/** The backend ran but could not return the secret (item missing / empty / nonzero exit). */
+export const secretLookupFailed = (backend: "keychain" | "op", detail: string): DatumError =>
+  new DatumError("SECRET_LOOKUP_FAILED", `Secret lookup via "${backend}" failed: ${detail}`);

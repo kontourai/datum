@@ -11,8 +11,13 @@
  * We emit `env: [<auth.env>]` (the var NAME) rather than `options.apiKey`, keeping
  * datum's secret-reference-only invariant: the literal key never enters generated
  * config — opencode reads it from the environment itself.
+ *
+ * opencode's provider `env` field is a list of env var NAMES; it has no notion of
+ * a macOS Keychain or 1Password reference. Providers whose auth is `keychain`/`op`
+ * are therefore skipped with a warning (see the README support matrix).
  */
 
+import { authKind } from "./auth.js";
 import type { DatumConfig, ProviderKind } from "./types.js";
 
 /** opencode schema revision this generator was written against (for provenance). */
@@ -46,14 +51,15 @@ export interface OpencodeProviderBlock {
 
 export interface GeneratedOpencode {
   block: OpencodeProviderBlock;
-  /** Providers skipped because their kind has no known opencode npm mapping. */
+  /** Providers skipped because their kind or auth backend has no opencode mapping. */
   warnings: string[];
 }
 
 /**
  * Build the opencode `{ provider: {...} }` block from a datum config. Providers
- * whose kind has no known opencode npm package are skipped and reported in
- * `warnings` rather than emitting a broken entry.
+ * whose kind has no known opencode npm package — or whose auth is not env-var
+ * based (keychain/op, which opencode cannot express) — are skipped and reported
+ * in `warnings` rather than emitting a broken entry.
  */
 export function generateOpencodeProviderBlock(config: DatumConfig): GeneratedOpencode {
   const provider: Record<string, OpencodeProviderEntry> = {};
@@ -65,13 +71,20 @@ export function generateOpencodeProviderBlock(config: DatumConfig): GeneratedOpe
       warnings.push(`skipped provider "${id}": kind "${p.kind}" has no known opencode npm mapping.`);
       continue;
     }
+    if (authKind(p.auth) !== "env") {
+      warnings.push(
+        `skipped provider "${id}": auth backend "${authKind(p.auth)}" is not expressible in opencode ` +
+          `(opencode reads keys from env var names only). Use an { "env": "VAR" } auth ref for opencode.`,
+      );
+      continue;
+    }
     const models: Record<string, OpencodeModelEntry> = {};
     for (const m of p.models) models[m] = { name: m };
 
     const entry: OpencodeProviderEntry = {
       npm,
       name: id,
-      env: [p.auth.env],
+      env: [(p.auth as { env: string }).env],
       models,
     };
     if (p.baseUrl) entry.options = { baseURL: p.baseUrl };

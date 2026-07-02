@@ -1,20 +1,26 @@
 /**
  * `datum doctor` diagnostics.
  *
- * Without --probe: purely offline — config parses, every role resolves, every
- * provider's API-key env var is present. This touches no network.
+ * Without --probe: purely offline — config parses, every role resolves, and each
+ * provider's key backend is reachable-in-principle (env var set, or the
+ * keychain/op tool present). This touches NO network and reads NO secret: the
+ * key-status check reports the auth kind and whether the backing tool is
+ * available, never the value.
  *
  * With --probe: the SINGLE place in datum permitted to touch the network. It
- * makes ONE minimal request per provider (max_tokens: 1) against the
- * anthropic-compatible /v1/messages shape using plain fetch, to verify the
- * endpoint + key + model actually work. `fetchImpl` is injectable so this is
- * unit-tested without real network access.
+ * makes ONE minimal request per provider (max_tokens: 1) against the shape for
+ * the provider's kind — anthropic-compatible POST /v1/messages, openai-compatible
+ * POST /chat/completions — using plain fetch, to verify endpoint + key + model.
+ * `fetchImpl` and `secretRunner` are injectable so this is unit-tested without
+ * real network access or a real Keychain / 1Password.
  */
 
+import { describeAuth } from "./auth.js";
 import { loadConfig } from "./config.js";
 import { DatumError } from "./errors.js";
 import { resolve, resolveRef } from "./resolve.js";
-import type { ProviderConfig, ResolveOptions } from "./types.js";
+import { defaultSecretRunner } from "./secrets.js";
+import type { ProviderConfig, ProviderKind, ResolveOptions } from "./types.js";
 
 export type FetchLike = (
   url: string,
@@ -69,6 +75,41 @@ export async function probeAnthropicCompatible(
   }
 }
 
+/**
+ * Probe one openai-compatible provider with a max_tokens:1 request against
+ * POST {baseUrl}/chat/completions using a Bearer token. Same status mapping as
+ * the anthropic-compatible probe.
+ */
+export async function probeOpenaiCompatible(
+  args: { baseUrl?: string; apiKey: string; model: string },
+  fetchImpl: FetchLike,
+): Promise<DoctorCheck> {
+  const base = (args.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
+  const url = `${base}/chat/completions`;
+  const name = `probe ${args.model} @ ${base}`;
+  try {
+    const res = await fetchImpl(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${args.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: args.model,
+        max_tokens: 1,
+        messages: [{ role: "user", content: "ping" }],
+      }),
+    });
+    if (res.ok) return { name, status: "pass", detail: `HTTP ${res.status}` };
+    if (res.status === 401 || res.status === 403) {
+      return { name, status: "fail", detail: `auth rejected (HTTP ${res.status})` };
+    }
+    return { name, status: "fail", detail: `unexpected HTTP ${res.status}` };
+  } catch (err) {
+    return { name, status: "fail", detail: `unreachable: ${(err as Error).message}` };
+  }
+}
+
 export interface DoctorOptions extends ResolveOptions {
   probe?: boolean;
   fetchImpl?: FetchLike;
@@ -96,7 +137,7 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<DoctorReport>
 
   const config = loaded.config;
 
-  // 2. Every role resolves.
+  // 2. Every role resolves (no secret read).
   for (const role of Object.keys(config.roles ?? {})) {
     try {
       const r = resolveRef(role, opts);
@@ -107,23 +148,34 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<DoctorReport>
     }
   }
 
-  // 3. Every provider's API-key env var is present.
+  // 3. Every provider's key backend is reachable-in-principle — NO secret read.
   const env = { ...process.env, ...(opts.env ?? {}) };
+  const runner = opts.secretRunner ?? defaultSecretRunner;
   for (const [id, p] of Object.entries(config.providers ?? {}) as [string, ProviderConfig][]) {
-    const keyVal = env[p.auth.env];
-    const set = typeof keyVal === "string" && keyVal.length > 0;
-    checks.push({
-      name: `key ${id}`,
-      status: set ? "pass" : "warn",
-      detail: set ? `${p.auth.env} is set` : `${p.auth.env} is not set`,
-    });
+    const auth = describeAuth(p.auth, env, runner);
+    if (auth.kind === "env") {
+      checks.push({
+        name: `key ${id}`,
+        status: auth.available ? "pass" : "warn",
+        detail: auth.available ? `env ${auth.ref} is set` : `env ${auth.ref} is not set`,
+      });
+    } else {
+      checks.push({
+        name: `key ${id}`,
+        status: auth.available ? "pass" : "warn",
+        detail: auth.available
+          ? `${auth.kind} (${auth.ref}) backend available via ${auth.tool}`
+          : `${auth.kind} (${auth.ref}) backend tool ${auth.tool} not available (key not read)`,
+      });
+    }
   }
 
   // 4. Optional live probe.
   if (opts.probe) {
     const fetchImpl = opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike | undefined);
     for (const [id, p] of Object.entries(config.providers ?? {}) as [string, ProviderConfig][]) {
-      if (p.kind !== "anthropic-compatible") {
+      const probeFn = probeForKind(p.kind);
+      if (!probeFn) {
         checks.push({
           name: `probe ${id}`,
           status: "skip",
@@ -143,7 +195,7 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<DoctorReport>
         checks.push({ name: `probe ${id}`, status: "fail", detail });
         continue;
       }
-      const check = await probeAnthropicCompatible(
+      const check = await probeFn(
         { baseUrl: target.baseUrl, apiKey: target.apiKey, model: target.model },
         fetchImpl,
       );
@@ -154,3 +206,15 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<DoctorReport>
   const ok = !checks.some((c) => c.status === "fail");
   return { ok, checks };
 }
+
+type ProbeFn = (
+  args: { baseUrl?: string; apiKey: string; model: string },
+  fetchImpl: FetchLike,
+) => Promise<DoctorCheck>;
+
+function probeForKind(kind: ProviderKind): ProbeFn | undefined {
+  if (kind === "anthropic-compatible") return probeAnthropicCompatible;
+  if (kind === "openai-compatible") return probeOpenaiCompatible;
+  return undefined;
+}
+

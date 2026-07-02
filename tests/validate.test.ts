@@ -67,3 +67,50 @@ test("validate: rejects malformed role ref", () => {
     (e: unknown) => (e as { code: string }).code === "INVALID_CONFIG",
   );
 });
+
+test("validate: accepts keychain auth ref", () => {
+  const cfg = validateConfig({
+    providers: { p: { kind: "anthropic-compatible", auth: { keychain: { service: "svc", account: "acct" } }, models: ["m"] } },
+  });
+  assert.ok(cfg.providers!.p);
+});
+
+test("validate: accepts op:// auth ref", () => {
+  const cfg = validateConfig({
+    providers: { p: { kind: "anthropic-compatible", auth: { op: "op://Private/anthropic/credential" }, models: ["m"] } },
+  });
+  assert.ok(cfg.providers!.p);
+});
+
+test("validate: rejects malformed op:// ref (INVALID_CONFIG)", () => {
+  assert.throws(
+    () => validateConfig({ providers: { p: { kind: "anthropic-compatible", auth: { op: "op://only-two/parts" }, models: ["m"] } } }),
+    (e: unknown) => (e as { code: string }).code === "INVALID_CONFIG",
+  );
+});
+
+test("validate: rejects more than one auth backend", () => {
+  assert.throws(
+    () => validateConfig({ providers: { p: { kind: "anthropic-compatible", auth: { env: "K", op: "op://a/b/c" }, models: ["m"] } } }),
+    (e: unknown) => (e as { code: string }).code === "INVALID_CONFIG",
+  );
+});
+
+test("validate: rejects keychain with unknown sub-key", () => {
+  assert.throws(
+    () => validateConfig({ providers: { p: { kind: "anthropic-compatible", auth: { keychain: { service: "s", bogus: 1 } }, models: ["m"] } } }),
+    (e: unknown) => (e as { code: string }).code === "INVALID_CONFIG",
+  );
+});
+
+test("validate: rejects secret literal hidden in a keychain field", () => {
+  const SK = ["sk", "-ant-", "longsecretvaluehere1234567890"].join("");
+  assert.throws(
+    () => validateConfig({ providers: { p: { kind: "anthropic-compatible", auth: { keychain: { service: SK } }, models: ["m"] } } }),
+    (e: unknown) => (e as { code: string }).code === "SECRET_LITERAL",
+  );
+});
+
+test("looksLikeSecretLiteral: op:// reference is not a secret", () => {
+  assert.equal(looksLikeSecretLiteral("op://Private/anthropic/credential"), false);
+});

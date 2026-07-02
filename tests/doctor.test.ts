@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { runDoctor, probeAnthropicCompatible } from "../src/index.js";
+import { runDoctor, probeAnthropicCompatible, probeOpenaiCompatible } from "../src/index.js";
 import type { FetchLike } from "../src/index.js";
-import { SAMPLE } from "./helpers.js";
+import { SAMPLE, MULTI_AUTH, fakeRunner } from "./helpers.js";
 
 test("doctor offline: config + roles pass, unset key warns (not fail)", async () => {
   const report = await runDoctor({ config: SAMPLE, env: { TEST_ZAI_KEY: "k" } });
@@ -68,13 +68,59 @@ test("doctor --probe: injected fetch, anthropic-compatible probed, key materiali
   assert.ok(probes.every((p) => p.status === "pass"));
 });
 
-test("doctor --probe: non-anthropic kind is skipped, not failed", async () => {
+test("doctor --probe: unknown kind is skipped, not failed", async () => {
   const report = await runDoctor({
-    config: { providers: { oai: { kind: "openai-compatible", auth: { env: "OAI_KEY" }, models: ["gpt"] } } },
+    config: { providers: { weird: { kind: "mystery-kind", auth: { env: "W_KEY" }, models: ["m"] } } },
+    env: { W_KEY: "k" },
+    probe: true,
+    fetchImpl: okFetch,
+  });
+  const probe = report.checks.find((c) => c.name === "probe weird");
+  assert.equal(probe?.status, "skip");
+});
+
+test("probeOpenaiCompatible unit: POST /chat/completions with Bearer + max_tokens 1", async () => {
+  let captured: any;
+  const spy: FetchLike = async (url, init) => {
+    captured = { url, init };
+    return { ok: true, status: 200 };
+  };
+  const pass = await probeOpenaiCompatible(
+    { baseUrl: "https://proxy.example/v1", apiKey: "k", model: "gpt-x" },
+    spy,
+  );
+  assert.equal(pass.status, "pass");
+  assert.equal(captured.url, "https://proxy.example/v1/chat/completions");
+  assert.equal(captured.init.method, "POST");
+  assert.equal(captured.init.headers["authorization"], "Bearer k");
+  const body = JSON.parse(captured.init.body);
+  assert.equal(body.max_tokens, 1);
+  assert.equal(body.model, "gpt-x");
+  const auth = await probeOpenaiCompatible({ apiKey: "k", model: "m" }, authFetch);
+  assert.equal(auth.status, "fail");
+  assert.ok(auth.detail.includes("401"));
+});
+
+test("doctor --probe: openai-compatible provider IS probed", async () => {
+  const report = await runDoctor({
+    config: { providers: { oai: { kind: "openai-compatible", baseUrl: "https://proxy.example/v1", auth: { env: "OAI_KEY" }, models: ["gpt"] } } },
     env: { OAI_KEY: "k" },
     probe: true,
     fetchImpl: okFetch,
   });
   const probe = report.checks.find((c) => c.name === "probe oai");
-  assert.equal(probe?.status, "skip");
+  assert.equal(probe?.status, "pass");
+});
+
+test("doctor: keychain/op key checks report availability, never read the secret", async () => {
+  const runner = fakeRunner({ keychain: true, op: false });
+  const report = await runDoctor({ config: MULTI_AUTH, env: { TEST_ZAI_KEY: "k" }, secretRunner: runner });
+  const byName = Object.fromEntries(report.checks.map((c) => [c.name, c]));
+  assert.equal(byName["key zai"].status, "pass"); // env set
+  assert.equal(byName["key kc"].status, "pass"); // keychain available
+  assert.ok(byName["key kc"].detail.includes("security"));
+  assert.equal(byName["key onepw"].status, "warn"); // op unavailable
+  // No secret was read during offline checks.
+  assert.ok(!runner.calls.some((c) => c.startsWith("readKeychain") || c.startsWith("readOp")));
+  assert.equal(report.ok, true); // warnings do not fail the report
 });

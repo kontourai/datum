@@ -16,8 +16,13 @@
  * We deliberately do NOT read the downstream SDK's own ANTHROPIC_BASE_URL here:
  * that is the runtime SDK's escape hatch, and consuming it in the resolver too
  * would double-apply it. Datum's base-URL escape hatch is its own namespaced var.
+ *
+ * Secret materialization is LAZY: `resolveRef()` describes the auth backend and
+ * whether it is available (no secret read); only `resolve()` reads the value —
+ * from the env var, the macOS Keychain, or 1Password, per the provider's auth.
  */
 
+import { describeAuth, authKind } from "./auth.js";
 import { loadConfig } from "./config.js";
 import {
   ambiguousModel,
@@ -27,6 +32,7 @@ import {
   unknownProvider,
   unknownRole,
 } from "./errors.js";
+import { defaultSecretRunner } from "./secrets.js";
 import type {
   DatumConfig,
   ProviderConfig,
@@ -97,16 +103,18 @@ function resolveModelRef(
   throw bareZeroMatch(ref);
 }
 
-/**
- * Resolve a ref (role name OR model ref) WITHOUT materializing the secret.
- * Returns which env var holds the key and whether it is currently set.
- */
-export function resolveRef(ref: string, opts: ResolveOptions = {}): ResolvedRef {
+/** Shared: config lookup + ref dispatch, returning provider/model + effective baseUrl. */
+function resolveProvider(ref: string, opts: ResolveOptions): {
+  provider: string;
+  providerConfig: ProviderConfig;
+  model: string;
+  baseUrl?: string;
+  env: Record<string, string | undefined>;
+} {
   const { config } = loadConfig(opts);
   const env = effectiveEnv(opts);
 
   let resolved: ResolvedProviderAndModel;
-
   if (ref.includes("@")) {
     // Explicit model ref — never a role.
     resolved = resolveModelRef(config, ref, (m) => unknownModel(m, allModels(config)));
@@ -115,10 +123,8 @@ export function resolveRef(ref: string, opts: ResolveOptions = {}): ResolvedRef 
     const override = env[`DATUM_ROLE_${envKey(ref)}`];
     const roleTarget = override ?? config.roles?.[ref];
     if (roleTarget !== undefined) {
-      // A role's target that names an unknown bare model is an UNKNOWN_MODEL.
       resolved = resolveModelRef(config, roleTarget, (m) => unknownModel(m, allModels(config)));
     } else {
-      // Not a role: allow bare-model convenience; zero match => unknown role.
       resolved = resolveModelRef(config, ref, () => unknownRole(ref, Object.keys(config.roles ?? {})));
     }
   }
@@ -126,38 +132,60 @@ export function resolveRef(ref: string, opts: ResolveOptions = {}): ResolvedRef 
   const { provider, providerConfig, model } = resolved;
   const baseUrlOverride = env[`DATUM_BASEURL_${envKey(provider)}`];
   const baseUrl = baseUrlOverride ?? providerConfig.baseUrl;
-  const apiKeyEnv = providerConfig.auth.env;
-  const keyVal = env[apiKeyEnv];
-  const apiKeySet = typeof keyVal === "string" && keyVal.length > 0;
+  return { provider, providerConfig, model, baseUrl, env };
+}
+
+/**
+ * Resolve a ref (role name OR model ref) WITHOUT materializing the secret.
+ * Describes the auth backend and whether it is available (env var set, or the
+ * keychain/op tool present) — the backing tool is NOT invoked to read a value.
+ */
+export function resolveRef(ref: string, opts: ResolveOptions = {}): ResolvedRef {
+  const { provider, providerConfig, model, baseUrl, env } = resolveProvider(ref, opts);
+  const runner = opts.secretRunner ?? defaultSecretRunner;
+  const auth = describeAuth(providerConfig.auth, env, runner);
 
   return {
     provider,
     kind: providerConfig.kind,
     ...(baseUrl ? { baseUrl } : {}),
-    apiKeyEnv,
-    apiKeySet,
     model,
+    auth,
+    ...(auth.kind === "env" ? { apiKeyEnv: auth.envVar } : {}),
+    apiKeySet: auth.available,
   };
 }
 
 /**
- * Resolve a ref and MATERIALIZE the API key from the environment. Throws
- * MISSING_ENV (naming the var) when the referenced env var is unset/empty.
- * The returned `{ baseUrl, apiKey, model }` lines up 1:1 with traverse's
- * `createAnthropicExtractionProvider` options.
+ * Resolve a ref and MATERIALIZE the API key from its backend. For `env` auth,
+ * throws MISSING_ENV (naming the var) when unset; for keychain/op, reads the
+ * value via the SecretRunner (throwing SECRET_BACKEND_UNAVAILABLE /
+ * SECRET_LOOKUP_FAILED on failure). The returned `{ baseUrl, apiKey, model }`
+ * lines up 1:1 with traverse's `createAnthropicExtractionProvider` options.
  */
 export function resolve(ref: string, opts: ResolveOptions = {}): ResolvedTarget {
-  const r = resolveRef(ref, opts);
-  const env = effectiveEnv(opts);
-  const apiKey = env[r.apiKeyEnv];
-  if (typeof apiKey !== "string" || apiKey.length === 0) {
-    throw missingEnv(r.apiKeyEnv, r.provider);
+  const { provider, providerConfig, model, baseUrl, env } = resolveProvider(ref, opts);
+  const runner = opts.secretRunner ?? defaultSecretRunner;
+  const auth = providerConfig.auth;
+
+  let apiKey: string;
+  const kind = authKind(auth);
+  if (kind === "env") {
+    const envVar = (auth as { env: string }).env;
+    const val = env[envVar];
+    if (typeof val !== "string" || val.length === 0) throw missingEnv(envVar, provider);
+    apiKey = val;
+  } else if (kind === "keychain") {
+    apiKey = runner.readKeychain((auth as { keychain: { service: string; account?: string } }).keychain);
+  } else {
+    apiKey = runner.readOp((auth as { op: string }).op);
   }
+
   return {
-    provider: r.provider,
-    kind: r.kind,
-    ...(r.baseUrl ? { baseUrl: r.baseUrl } : {}),
+    provider,
+    kind: providerConfig.kind,
+    ...(baseUrl ? { baseUrl } : {}),
     apiKey,
-    model: r.model,
+    model,
   };
 }

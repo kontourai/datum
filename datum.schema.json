@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/kontourai/datum/datum.schema.json",
   "title": "Datum registry config",
-  "description": "AI provider/model/role registry. Answers which backend, which model, whose key, what base URL. Auth is by reference only (env var name); never embed a literal secret.",
+  "description": "AI provider/model/role registry. Answers which backend, which model, whose key, what base URL. Auth is by reference only (env var name, macOS Keychain, or 1Password); never embed a literal secret.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -26,7 +26,7 @@
       "properties": {
         "kind": {
           "type": "string",
-          "description": "Open enum. 'anthropic-compatible' now; 'openai-compatible' reserved.",
+          "description": "Open enum. 'anthropic-compatible' and 'openai-compatible' are implemented; any string is accepted so new kinds can land. Not every consumer supports every kind (see README matrix).",
           "examples": ["anthropic-compatible", "openai-compatible"]
         },
         "baseUrl": {
@@ -44,17 +44,50 @@
       }
     },
     "Auth": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["env"],
-      "properties": {
-        "env": {
-          "type": "string",
-          "pattern": "^[A-Z][A-Z0-9_]*$",
-          "description": "Name of the environment variable holding the API key. NEVER the key itself."
+      "description": "Auth by reference only: exactly one of env / keychain / op. Never the key itself; a literal-secret-looking value is rejected by the validator.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["env"],
+          "properties": {
+            "env": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]*$",
+              "description": "Name of the environment variable holding the API key. NEVER the key itself."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["keychain"],
+          "properties": {
+            "keychain": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["service"],
+              "properties": {
+                "service": { "type": "string", "minLength": 1, "description": "macOS Keychain generic-password service name." },
+                "account": { "type": "string", "minLength": 1, "description": "Optional Keychain account name." }
+              },
+              "description": "macOS Keychain reference (darwin-only), resolved lazily via `security find-generic-password -w`."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op"],
+          "properties": {
+            "op": {
+              "type": "string",
+              "pattern": "^op://[^/\\s]+/[^/\\s]+/[^\\s]+$",
+              "description": "1Password secret reference (op://vault/item/field), resolved lazily via `op read`."
+            }
+          }
         }
-      },
-      "description": "Auth by reference only in this slice: { env: \"VAR_NAME\" }. A literal-secret-looking value is rejected by the validator."
+      ]
     }
   }
 }
