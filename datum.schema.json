@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kontourai/datum/datum.schema.json",
+  "title": "Datum registry config",
+  "description": "AI provider/model/role registry. Answers which backend, which model, whose key, what base URL. Auth is by reference only (env var name); never embed a literal secret.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "providers": {
+      "type": "object",
+      "description": "Provider id -> provider definition.",
+      "additionalProperties": { "$ref": "#/$defs/Provider" }
+    },
+    "roles": {
+      "type": "object",
+      "description": "Role name -> model ref (model@provider or bare model).",
+      "additionalProperties": { "type": "string", "pattern": "^[^@\\s]+(@[^@\\s]+)?$" }
+    }
+  },
+  "$defs": {
+    "Provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "auth", "models"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Open enum. 'anthropic-compatible' now; 'openai-compatible' reserved.",
+          "examples": ["anthropic-compatible", "openai-compatible"]
+        },
+        "baseUrl": {
+          "type": "string",
+          "description": "Optional. Absent = SDK default for that kind.",
+          "format": "uri"
+        },
+        "auth": { "$ref": "#/$defs/Auth" },
+        "models": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" },
+          "description": "Model ids offered by this provider."
+        }
+      }
+    },
+    "Auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["env"],
+      "properties": {
+        "env": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$",
+          "description": "Name of the environment variable holding the API key. NEVER the key itself."
+        }
+      },
+      "description": "Auth by reference only in this slice: { env: \"VAR_NAME\" }. A literal-secret-looking value is rejected by the validator."
+    }
+  }
+}
