@@ -5,7 +5,7 @@
  * Precedence (highest first):
  *   1. opts.env          - explicit programmatic overrides
  *   2. process.env       - escape hatches: DATUM_ROLE_<NAME>, DATUM_BASEURL_<PROVIDER>
- *   3. repo file         - .kontour/datum.json
+ *   3. repo file         - .datum/config.json
  *   4. user file         - ~/.config/kontour/datum.json
  * (opts.env is merged OVER process.env, so 1 wins over 2; files are merged in
  * config.ts with repo over user, so 3 wins over 4.)

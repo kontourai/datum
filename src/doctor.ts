@@ -124,10 +124,11 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<DoctorReport>
     loaded = loadConfig(opts);
     const n = Object.keys(loaded.config.providers ?? {}).length;
     const r = Object.keys(loaded.config.roles ?? {}).length;
+    const files = loaded.sources.length ? loaded.sources.join(", ") : "(none found)";
     checks.push({
       name: "config",
       status: "pass",
-      detail: `parsed ${loaded.sources.length} file(s); ${n} provider(s), ${r} role(s)`,
+      detail: `parsed ${loaded.sources.length} file(s) [${files}]; ${n} provider(s), ${r} role(s)`,
     });
   } catch (err) {
     const detail = err instanceof DatumError ? `${err.code}: ${err.message}` : (err as Error).message;

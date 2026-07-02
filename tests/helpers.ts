@@ -39,7 +39,7 @@ export function tempTree(): TempTree {
   const home = path.join(dir, "home");
   const cwd = path.join(dir, "repo");
   mkdirSync(path.join(home, ".config", "kontour"), { recursive: true });
-  mkdirSync(path.join(cwd, ".kontour"), { recursive: true });
+  mkdirSync(path.join(cwd, ".datum"), { recursive: true });
   return {
     dir,
     home,
@@ -48,7 +48,7 @@ export function tempTree(): TempTree {
       writeFileSync(path.join(home, ".config", "kontour", "datum.json"), JSON.stringify(cfg));
     },
     writeRepo(cfg: unknown) {
-      writeFileSync(path.join(cwd, ".kontour", "datum.json"), JSON.stringify(cfg));
+      writeFileSync(path.join(cwd, ".datum", "config.json"), JSON.stringify(cfg));
     },
     cleanup() {
       rmSync(dir, { recursive: true, force: true });

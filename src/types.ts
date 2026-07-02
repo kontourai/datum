@@ -126,7 +126,7 @@ export interface ResolvedRef {
 export interface ResolveOptions {
   /** Pre-loaded config; when set, file loading is skipped entirely. */
   config?: DatumConfig;
-  /** Working directory used to locate the repo-level `.kontour/datum.json`. */
+  /** Working directory used to locate the repo-level `.datum/config.json`. */
   cwd?: string;
   /** Home directory used to locate the user-level `~/.config/kontour/datum.json`. */
   home?: string;

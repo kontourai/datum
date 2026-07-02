@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0](https://github.com/kontourai/datum/compare/v0.2.0...v0.3.0)
+
+### Features
+
+- **Repo-level config path corrected to `.datum/config.json`.** Aligns with the
+  portfolio's directory convention: `.kontourai/` is gitignored, per-machine
+  runtime state you ignore; `.<product>/` is a product's durable, committed
+  config directory you commit (precedent: `.veritas/` in veritas). The prior
+  path, `.kontour/datum.json`, was introduced ahead of that convention being
+  settled and had no external consumers, so this is a clean cutover with no
+  fallback or deprecation window — `.kontour/datum.json` is no longer read.
+  `datum doctor` and `datum list` now name the discovered config file path(s).
+  User-level config (`~/.config/kontour/datum.json`) is unchanged.
+
 ## [0.2.0](https://github.com/kontourai/datum/compare/v0.1.0...v0.2.0)
 
 ### Features
