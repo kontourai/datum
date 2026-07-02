@@ -1,6 +1,6 @@
 {
   "name": "@kontourai/datum",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Portfolio AI provider/model registry: define providers, models, roles once; resolve which backend, which model, whose key, what base URL. Never makes model calls.",
   "license": "MIT",
   "type": "module",

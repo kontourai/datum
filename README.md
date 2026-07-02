@@ -24,8 +24,21 @@ Node >= 22. Zero runtime dependencies.
 ## Config
 
 Two files, deep-merged. User-level `~/.config/kontour/datum.json` is the base;
-repo-level `.kontour/datum.json` overlays it and wins per-key; environment
+repo-level `.datum/config.json` overlays it and wins per-key; environment
 escape hatches override both.
+
+### The `.kontourai/` vs `.<product>/` convention
+
+Kontour portfolio tools use a consistent repo-level directory split:
+
+- **`.kontourai/`** is what you *ignore* — gitignored, per-machine, disposable
+  runtime state (caches, logs, generated scratch output).
+- **`.<product>/`** is what you *commit* — a product's durable, tracked config
+  directory, owned and versioned like any other source file (precedent:
+  `.veritas/` in the veritas repo).
+
+Datum's repo-level config directory is **`.datum/`**, and the file datum reads
+is **`.datum/config.json`**. Commit it.
 
 ```json
 {

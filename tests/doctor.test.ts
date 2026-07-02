@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { runDoctor, probeAnthropicCompatible, probeOpenaiCompatible } from "../src/index.js";
 import type { FetchLike } from "../src/index.js";
-import { SAMPLE, MULTI_AUTH, fakeRunner } from "./helpers.js";
+import { SAMPLE, MULTI_AUTH, fakeRunner, tempTree } from "./helpers.js";
 
 test("doctor offline: config + roles pass, unset key warns (not fail)", async () => {
   const report = await runDoctor({ config: SAMPLE, env: { TEST_ZAI_KEY: "k" } });
@@ -12,6 +12,21 @@ test("doctor offline: config + roles pass, unset key warns (not fail)", async ()
   assert.equal(byName["role extraction-default"], "pass");
   assert.equal(byName["key zai"], "pass");
   assert.equal(byName["key anthropic"], "warn"); // TEST_ANTHROPIC_KEY unset
+});
+
+test("doctor: config check names the discovered .datum/config.json path", async () => {
+  const t = tempTree();
+  try {
+    t.writeRepo({
+      providers: { zai: { kind: "anthropic-compatible", auth: { env: "TEST_ZAI_KEY" }, models: ["glm-5.2"] } },
+    });
+    const report = await runDoctor({ home: t.home, cwd: t.cwd, env: { TEST_ZAI_KEY: "k" } });
+    const configCheck = report.checks.find((c) => c.name === "config");
+    assert.ok(configCheck);
+    assert.ok(configCheck!.detail.includes(".datum/config.json"));
+  } finally {
+    t.cleanup();
+  }
 });
 
 test("doctor offline: an unresolvable role fails the report", async () => {

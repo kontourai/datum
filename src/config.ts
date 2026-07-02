@@ -1,11 +1,18 @@
 /**
  * Config discovery, deep-merge overlay, and validation.
  *
- * Two files, deep-merged: user-level `~/.config/kontour/datum.json` is the base;
- * repo-level `.kontour/datum.json` is the overlay and wins per-key. Environment
- * escape hatches override BOTH, but that happens later in resolve.ts — this
- * module owns only the file layer. A missing file is not an error (skipped); a
- * present-but-unparseable file is (INVALID_CONFIG, naming the path).
+ * Two files, deep-merged: user-level `~/.config/kontour/datum.json` is the
+ * base; repo-level `.datum/config.json` is the overlay and wins per-key.
+ *
+ * Repo-level config follows the portfolio's directory convention: `.kontourai/`
+ * is what you *ignore* (gitignored, per-machine runtime state); `.<product>/`
+ * is what you *commit* (the product's durable, tracked config directory) —
+ * datum's is `.datum/config.json`.
+ *
+ * Environment escape hatches override BOTH, but that happens later in
+ * resolve.ts — this module owns only the file layer. A missing file is not an
+ * error (skipped); a present-but-unparseable file is (INVALID_CONFIG, naming
+ * the path).
  */
 
 import { readFileSync } from "node:fs";
@@ -26,9 +33,10 @@ export function userConfigPath(opts: Pick<ResolveOptions, "home" | "userConfigPa
   return path.join(opts.home ?? os.homedir(), ".config", "kontour", "datum.json");
 }
 
+/** Repo-level config path: `.datum/config.json` (the product's committed config dir). */
 export function repoConfigPath(opts: Pick<ResolveOptions, "cwd" | "repoConfigPath">): string {
   if (opts.repoConfigPath) return opts.repoConfigPath;
-  return path.join(opts.cwd ?? process.cwd(), ".kontour", "datum.json");
+  return path.join(opts.cwd ?? process.cwd(), ".datum", "config.json");
 }
 
 function readJsonIfPresent(file: string): Record<string, unknown> | undefined {

@@ -17,13 +17,23 @@ Resolution composes two independent layers.
 
 **File layer (config.ts).** Two files are deep-merged:
 
-1. repo-level `.kontour/datum.json` — overlay, wins per-key
+1. repo-level `.datum/config.json` — overlay, wins per-key
 2. user-level `~/.config/kontour/datum.json` — base
 
 Deep-merge means objects merge recursively; arrays and scalars from the overlay
 *replace* (a provider's `models` array is replaced wholesale by the repo file,
 not concatenated). A missing file is skipped; a present-but-unparseable file is a
 hard `INVALID_CONFIG` error naming the path.
+
+**Repo-level directory convention.** Kontour portfolio tools split repo-level
+state into `.kontourai/` — gitignored, per-machine runtime state you *ignore*
+— and `.<product>/` — the product's durable, tracked config directory you
+*commit* (precedent: `.veritas/` in the veritas repo). Datum's repo-level
+config directory is `.datum/`, and the config file is `.datum/config.json`.
+An earlier slice used `.kontour/datum.json`; that path was corrected to
+`.datum/config.json` in 0.3.0 before any external consumer depended on it, so
+there is no fallback or deprecation period — `.kontour/datum.json` is simply
+not read.
 
 **Resolution layer (resolve.ts).** Highest precedence first:
 
@@ -153,6 +163,19 @@ experimental; `--dry-run` prints the block for review.
   workflow-dispatch fallback since datum may not yet be in the release app's repo
   list). **Held before external release** pending owner ratification: the repo is
   NOT flipped public, no tag is pushed, nothing is published yet.
+
+## Slice 3 (0.3.0, shipped)
+
+- **Repo-level config path corrected to `.datum/config.json` — DONE.** Slice 1
+  used `.kontour/datum.json`, ahead of the portfolio's `.kontourai/` (ignored) vs
+  `.<product>/` (committed) directory convention being settled (precedent:
+  `.veritas/` in veritas). Corrected before any external consumer depended on
+  the old path (campfit's integration was unmerged and already targeted the new
+  path), so this is a **clean cutover, no fallback, no deprecation window**:
+  `repoConfigPath()` now defaults to `<cwd>/.datum/config.json`; the old
+  `.kontour/datum.json` is simply not read. `datum doctor` and `datum list` now
+  name the discovered config file path(s) rather than just a count. User-level
+  config (`~/.config/kontour/datum.json`) is unaffected.
 
 ## Deferred
 
