@@ -30,6 +30,11 @@ export {
   probeAnthropicCompatible,
   probeOpenaiCompatible,
 } from "./doctor.js";
+export {
+  discoverModels,
+  testConnection,
+  fetchOpenaiCompatibleModels,
+} from "./discover.js";
 export { DatumError } from "./errors.js";
 export type { DatumErrorCode } from "./errors.js";
 export type {
@@ -56,3 +61,12 @@ export type {
   ClaudeCodeEnvBlock,
 } from "./claudecode.js";
 export type { DoctorReport, DoctorCheck, DoctorOptions, FetchLike, CheckStatus } from "./doctor.js";
+export type {
+  DiscoverResult,
+  DiagnosisClass,
+  DiscoverFetchLike,
+  DiscoverModelsOptions,
+  TestConnectionCheck,
+  TestConnectionReport,
+  TestConnectionOptions,
+} from "./discover.js";

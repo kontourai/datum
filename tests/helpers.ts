@@ -1,4 +1,6 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import type { DatumConfig, SecretRunner, KeychainRef } from "../src/index.js";
@@ -116,4 +118,47 @@ export function fakeRunner(o: FakeRunnerOptions = {}): SecretRunner & { calls: s
       return o.opValue ?? "op-secret";
     },
   };
+}
+export interface FakeHttpServer {
+  url: string;
+  close(): Promise<void>;
+}
+
+/**
+ * A local `node:http` server bound to `127.0.0.1:0` (ephemeral port), used
+ * ONLY by `tests/cli.test.ts`'s end-to-end cases (unit-level
+ * `tests/discover.test.ts` cases use plain injected `DiscoverFetchLike`
+ * fakes, same style as `doctor.test.ts`'s `okFetch`/`authFetch`/`downFetch` —
+ * no HTTP server there, keep those fast and dependency-free). `close()`
+ * wraps `server.close()` in a Promise so callers can `await` cleanup in a
+ * `finally` block (mirrors `tempTree()`'s `cleanup()` pattern above).
+ */
+export function startFakeHttpServer(
+  handler: (req: IncomingMessage, res: ServerResponse) => void,
+): Promise<FakeHttpServer> {
+  // NOTE: the underlying `net.Server#address()` is `null` until the
+  // `"listening"` event fires (verified: immediately after calling
+  // `listen()`, `address()` returns null) — so this cannot be synchronous
+  // and still report a correct `url`. Async (awaited by callers in
+  // tests/cli.test.ts) is the smallest correct fix.
+  const server = createServer(handler);
+  return new Promise((resolvePromise, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        reject(new Error("startFakeHttpServer: failed to bind an ephemeral TCP port"));
+        return;
+      }
+      const url = `http://127.0.0.1:${address.port}`;
+      resolvePromise({
+        url,
+        close(): Promise<void> {
+          return new Promise((resolveClose, rejectClose) => {
+            server.close((err) => (err ? rejectClose(err) : resolveClose()));
+          });
+        },
+      });
+    });
+  });
 }

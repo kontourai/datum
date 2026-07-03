@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { tempTree, SAMPLE } from "./helpers.js";
+import { tempTree, SAMPLE, startFakeHttpServer } from "./helpers.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 // compiled test lives at dist/tests/cli.test.js -> repo root is ../../..
@@ -14,6 +14,39 @@ function run(args: string[], env: Record<string, string>, cwd: string) {
     cwd,
     env: { PATH: process.env.PATH ?? "", ...env },
     encoding: "utf8",
+  });
+}
+
+/**
+ * ASYNC variant of `run()`, required only by the discover/test-connection
+ * cases below that spawn the CLI while a fake `node:http` server (from
+ * `startFakeHttpServer`) is listening IN THIS SAME test process:
+ * `spawnSync` blocks this process's event loop while waiting on the child,
+ * which would starve the in-process fake server of the ability to accept/
+ * service the child's `fetch` request — a deadlock, not a slowdown. `spawn`
+ * (non-blocking) keeps this process's event loop running so the server can
+ * respond while we `await` the child's exit. Every other CLI test keeps
+ * using the plain synchronous `run()` above (no in-process network
+ * involved, no risk of this deadlock) — do not switch those.
+ */
+function runAsync(
+  args: string[],
+  env: Record<string, string>,
+  cwd: string,
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(process.execPath, [BIN, ...args], {
+      cwd,
+      env: { PATH: process.env.PATH ?? "", ...env },
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => (stdout += chunk));
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("close", (status) => resolvePromise({ status, stdout, stderr }));
   });
 }
 
@@ -133,6 +166,213 @@ test("cli sync: unknown target errors", () => {
     const r = run(["sync", "frobnicate"], env, cwd);
     assert.equal(r.status, 1);
     assert.ok(r.stderr.includes("unknown target"));
+  });
+});
+
+// --- discover / test-connection (issue #5) ---
+// End-to-end against a LOCAL node:http server bound to 127.0.0.1:<ephemeral
+// port> — never a real provider host (AC5). Every server started here is
+// closed in a `finally` block.
+
+function discoverProviderConfig(baseUrl: string) {
+  return {
+    providers: {
+      "local-oai": {
+        kind: "openai-compatible",
+        baseUrl,
+        auth: { env: "LOCAL_OAI_KEY" },
+        models: ["local-model-a"],
+      },
+    },
+  };
+}
+
+test("cli discover: lists models from a local /models fixture, exit 0", async () => {
+  const server = await startFakeHttpServer((req, res) => {
+    if (req.headers.authorization === "Bearer test-key") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ data: [{ id: "local-model-a" }, { id: "local-model-b" }] }));
+    } else {
+      res.writeHead(401);
+      res.end();
+    }
+  });
+  try {
+    const t = tempTree();
+    try {
+      t.writeRepo(discoverProviderConfig(server.url));
+      const r = await runAsync(["discover", "local-oai"], { HOME: t.home, LOCAL_OAI_KEY: "test-key" }, t.cwd);
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(r.stdout.includes("local-model-a"));
+      assert.ok(r.stdout.includes("local-model-b"));
+    } finally {
+      t.cleanup();
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test("cli discover --json: emits structured model list", async () => {
+  const server = await startFakeHttpServer((req, res) => {
+    if (req.headers.authorization === "Bearer test-key") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ data: [{ id: "local-model-a" }, { id: "local-model-b" }] }));
+    } else {
+      res.writeHead(401);
+      res.end();
+    }
+  });
+  try {
+    const t = tempTree();
+    try {
+      t.writeRepo(discoverProviderConfig(server.url));
+      const r = await runAsync(["discover", "local-oai", "--json"], { HOME: t.home, LOCAL_OAI_KEY: "test-key" }, t.cwd);
+      assert.equal(r.status, 0, r.stderr);
+      const out = JSON.parse(r.stdout);
+      assert.equal(out.ok, true);
+      assert.ok(out.models.includes("local-model-a"));
+      assert.ok(out.models.includes("local-model-b"));
+    } finally {
+      t.cleanup();
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test("cli test-connection: exit 0 on a healthy local fixture", async () => {
+  const server = await startFakeHttpServer((req, res) => {
+    if (req.headers.authorization === "Bearer test-key") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ data: [{ id: "local-model-a" }] }));
+    } else {
+      res.writeHead(401);
+      res.end();
+    }
+  });
+  try {
+    const t = tempTree();
+    try {
+      t.writeRepo(discoverProviderConfig(server.url));
+      const r = await runAsync(["test-connection", "local-oai"], { HOME: t.home, LOCAL_OAI_KEY: "test-key" }, t.cwd);
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(r.stdout.includes("test-connection: OK"));
+    } finally {
+      t.cleanup();
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test("cli test-connection: exit 1 with auth diagnostic on wrong key", async () => {
+  const server = await startFakeHttpServer((req, res) => {
+    if (req.headers.authorization === "Bearer test-key") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ data: [{ id: "local-model-a" }] }));
+    } else {
+      res.writeHead(401);
+      res.end();
+    }
+  });
+  try {
+    const t = tempTree();
+    try {
+      t.writeRepo(discoverProviderConfig(server.url));
+      const r = await runAsync(["test-connection", "local-oai"], { HOME: t.home, LOCAL_OAI_KEY: "wrong-key" }, t.cwd);
+      assert.equal(r.status, 1);
+      assert.ok(r.stdout.includes("auth rejected") || r.stderr.includes("auth rejected"));
+    } finally {
+      t.cleanup();
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test("cli test-connection: exit 1 with unreachable diagnostic against a closed port", async () => {
+  const server = await startFakeHttpServer((_req, res) => res.end());
+  const deadUrl = server.url;
+  await server.close(); // close immediately so the connect attempt throws (ECONNREFUSED)
+  const t = tempTree();
+  try {
+    t.writeRepo(discoverProviderConfig(deadUrl));
+    const r = await runAsync(["test-connection", "local-oai"], { HOME: t.home, LOCAL_OAI_KEY: "test-key" }, t.cwd);
+    assert.equal(r.status, 1);
+    assert.ok(r.stdout.includes("unreachable") || r.stderr.includes("unreachable"));
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("cli discover: exit 1 with incompatible diagnostic against a non-OpenAI-compatible endpoint", async () => {
+  const server = await startFakeHttpServer((_req, res) => {
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("hello");
+  });
+  try {
+    const t = tempTree();
+    try {
+      t.writeRepo(discoverProviderConfig(server.url));
+      const r = await runAsync(["discover", "local-oai"], { HOME: t.home, LOCAL_OAI_KEY: "test-key" }, t.cwd);
+      assert.equal(r.status, 1);
+      assert.ok(r.stdout.includes("not valid JSON") || r.stderr.includes("not valid JSON"));
+    } finally {
+      t.cleanup();
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test("cli discover: unknown provider errors", () => {
+  withTree({}, (cwd, env) => {
+    const r = run(["discover", "does-not-exist"], env, cwd);
+    assert.equal(r.status, 1);
+    assert.ok(r.stderr.includes("does-not-exist"));
+  });
+});
+
+test("cli discover: missing credential exits 1 with a plain-text auth diagnostic", () => {
+  withTree({}, (cwd, env) => {
+    const t = tempTree();
+    try {
+      t.writeRepo(discoverProviderConfig("http://127.0.0.1:1"));
+      // LOCAL_OAI_KEY intentionally NOT set — credential missing, no network call.
+      const r = run(["discover", "local-oai"], { HOME: t.home }, t.cwd);
+      assert.equal(r.status, 1);
+      assert.ok(r.stderr.includes("LOCAL_OAI_KEY"));
+      assert.ok(r.stderr.toLowerCase().includes("auth"));
+    } finally {
+      t.cleanup();
+    }
+  });
+});
+
+test("cli discover --json: missing credential emits structured {ok:false, errorClass:'auth'}, not a plain-text die() message", () => {
+  withTree({}, (cwd, env) => {
+    const t = tempTree();
+    try {
+      t.writeRepo(discoverProviderConfig("http://127.0.0.1:1"));
+      // LOCAL_OAI_KEY intentionally NOT set — credential missing, no network call.
+      const r = run(["discover", "local-oai", "--json"], { HOME: t.home }, t.cwd);
+      assert.equal(r.status, 1);
+      const out = JSON.parse(r.stdout);
+      assert.equal(out.ok, false);
+      assert.equal(out.errorClass, "auth");
+      assert.ok(out.detail.includes("LOCAL_OAI_KEY"));
+    } finally {
+      t.cleanup();
+    }
+  });
+});
+
+test("cli test-connection: missing <provider> errors", () => {
+  withTree({}, (cwd, env) => {
+    const r = run(["test-connection"], env, cwd);
+    assert.equal(r.status, 1);
+    assert.ok(r.stderr.includes("<provider>"));
   });
 });
 
