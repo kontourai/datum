@@ -126,11 +126,11 @@ returns an `auth` status (kind + reference + availability) instead of the value.
 ## CLI
 
 ```
-datum resolve <ref> [--json|--env] [--reveal]      Resolve a role or model ref
-datum list                                          Providers + roles, with auth status
-datum doctor [--probe]                              Diagnose config; --probe makes ONE live call/provider
-datum sync opencode [--dry-run]                     Generate opencode's provider block from the registry
-datum sync claude-code --role <name> [--dry-run]    Generate Claude Code's settings env block for a role
+datum resolve <ref> [--json|--env] [--reveal] [config flags]      Resolve a role or model ref
+datum list [config flags]                                          Providers + roles, with auth status
+datum doctor [--probe] [config flags]                               Diagnose config; --probe makes ONE live call/provider
+datum sync opencode [--dry-run] [config flags]                      Generate opencode's provider block from the registry
+datum sync claude-code --role <name> [--dry-run] [config flags]     Generate Claude Code's settings env block for a role
 ```
 
 - No command prints the API key value unless `--reveal` is passed.
@@ -149,6 +149,31 @@ datum sync claude-code --role <name> [--dry-run]    Generate Claude Code's setti
   **never** written — it is emitted only as an instruction naming its backend.
 - Both `sync` targets: live write is experimental and merges only a
   clearly datum-owned block; use `--dry-run` to preview.
+
+### Config-location flags
+
+Every subcommand (`resolve`, `list`, `doctor`, `sync opencode`, `sync claude-code`)
+accepts the same three config-location flags, threaded straight into the
+library's existing `ResolveOptions`/`loadConfig` parameters — pure plumbing, no
+new resolution behavior. Flags may appear anywhere on the command line, before
+or after positional arguments.
+
+```
+--cwd <dir>               Working dir for the repo-level .datum/config.json
+                           (default: the process's own cwd)
+--repo-config-path <file> Explicit repo config path; overrides --cwd entirely
+--user-config-path <file> Explicit user config path; overrides the
+                           ~/.config/kontour/datum.json default
+```
+
+Useful for scripting, CI, monorepos, or fixtures where the config isn't in the
+process's own working directory:
+
+```bash
+$ datum resolve extraction-default --cwd ../other-repo
+$ datum doctor --repo-config-path ./fixtures/.datum/config.json
+$ datum list --user-config-path ~/.config/kontour/work.json
+```
 
 ## Provider kinds × consumers
 

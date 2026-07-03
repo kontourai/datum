@@ -135,3 +135,185 @@ test("cli sync: unknown target errors", () => {
     assert.ok(r.stderr.includes("unknown target"));
   });
 });
+
+// --- --cwd / --repo-config-path / --user-config-path plumbing (issue #4) ---
+// These flags are pure CLI plumbing over the library's existing
+// ResolveOptions.cwd/repoConfigPath/userConfigPath; the fixtures below run the
+// binary from a NEUTRAL directory (the tempTree's parent, which itself has no
+// .datum/config.json) and prove the flag alone routes config discovery.
+
+test("cli resolve --cwd: locates repo config from a directory other than the process cwd", () => {
+  const t = tempTree();
+  try {
+    t.writeRepo(SAMPLE);
+    const r = run(
+      ["resolve", "extraction-default", "--json", "--cwd", t.cwd],
+      { HOME: t.home, TEST_ZAI_KEY: "x" },
+      t.dir, // neutral cwd: no .datum/config.json here
+    );
+    assert.equal(r.status, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.provider, "zai");
+    assert.equal(out.model, "glm-5.2");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("cli resolve: without --cwd, a neutral process cwd cannot see the repo config (unknown role)", () => {
+  const t = tempTree();
+  try {
+    t.writeRepo(SAMPLE);
+    const r = run(["resolve", "extraction-default", "--json"], { HOME: t.home, TEST_ZAI_KEY: "x" }, t.dir);
+    assert.equal(r.status, 1);
+    assert.ok(r.stderr.includes("UNKNOWN_ROLE"));
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("cli resolve --repo-config-path: explicit file path overrides --cwd-derived default", () => {
+  const t = tempTree();
+  try {
+    t.writeRepo(SAMPLE);
+    const explicitPath = path.join(t.cwd, ".datum", "config.json");
+    const r = run(
+      ["resolve", "extraction-default", "--json", "--repo-config-path", explicitPath],
+      { HOME: t.home, TEST_ZAI_KEY: "x" },
+      t.dir, // neutral cwd; --cwd is not passed at all
+    );
+    assert.equal(r.status, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.provider, "zai");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("cli resolve --user-config-path: explicit user file is read as the base layer", () => {
+  const t = tempTree();
+  try {
+    t.writeUser(SAMPLE);
+    const explicitUserPath = path.join(t.home, ".config", "kontour", "datum.json");
+    const r = run(
+      ["resolve", "worker", "--json", "--user-config-path", explicitUserPath],
+      { TEST_ANTHROPIC_KEY: "x" }, // no HOME set — proves the explicit path, not the default, is read
+      t.dir,
+    );
+    assert.equal(r.status, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.provider, "anthropic");
+    assert.equal(out.model, "claude-sonnet-5");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("cli resolve: --cwd works regardless of flag position relative to the positional ref", () => {
+  const t = tempTree();
+  try {
+    t.writeRepo(SAMPLE);
+    const r = run(
+      ["resolve", "--cwd", t.cwd, "extraction-default", "--json"],
+      { HOME: t.home, TEST_ZAI_KEY: "x" },
+      t.dir,
+    );
+    assert.equal(r.status, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.provider, "zai");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("cli doctor --cwd: locates repo config from a directory other than the process cwd", () => {
+  const t = tempTree();
+  try {
+    t.writeRepo(SAMPLE);
+    const r = run(["doctor", "--cwd", t.cwd], { HOME: t.home, TEST_ZAI_KEY: "x", TEST_ANTHROPIC_KEY: "y" }, t.dir);
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes("doctor: OK"));
+    assert.ok(r.stdout.includes(t.cwd));
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("cli doctor --repo-config-path: explicit file path overrides --cwd-derived default", () => {
+  const t = tempTree();
+  try {
+    t.writeRepo(SAMPLE);
+    const explicitPath = path.join(t.cwd, ".datum", "config.json");
+    const r = run(
+      ["doctor", "--repo-config-path", explicitPath],
+      { HOME: t.home, TEST_ZAI_KEY: "x", TEST_ANTHROPIC_KEY: "y" },
+      t.dir,
+    );
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes("doctor: OK"));
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("cli doctor --user-config-path: explicit user file is read as the base layer", () => {
+  const t = tempTree();
+  try {
+    t.writeUser(SAMPLE);
+    const explicitUserPath = path.join(t.home, ".config", "kontour", "datum.json");
+    const r = run(
+      ["doctor", "--user-config-path", explicitUserPath],
+      { TEST_ZAI_KEY: "x", TEST_ANTHROPIC_KEY: "y" },
+      t.dir,
+    );
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes("doctor: OK"));
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("cli list --cwd: reports the repo config source path", () => {
+  const t = tempTree();
+  try {
+    t.writeRepo(SAMPLE);
+    const r = run(["list", "--cwd", t.cwd], { HOME: t.home, TEST_ZAI_KEY: "x" }, t.dir);
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes(path.join(t.cwd, ".datum", "config.json")));
+    assert.ok(r.stdout.includes("extraction-default"));
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("cli sync opencode --cwd: generates provider block from a non-default cwd", () => {
+  const t = tempTree();
+  try {
+    t.writeRepo(SAMPLE);
+    const r = run(
+      ["sync", "opencode", "--dry-run", "--cwd", t.cwd],
+      { HOME: t.home, TEST_ZAI_KEY: "x" },
+      t.dir,
+    );
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes("@ai-sdk/anthropic"));
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("cli sync claude-code --cwd: resolves the role from a non-default cwd", () => {
+  const t = tempTree();
+  try {
+    t.writeRepo(SAMPLE);
+    const r = run(
+      ["sync", "claude-code", "--role", "worker", "--dry-run", "--cwd", t.cwd],
+      { HOME: t.home, TEST_ANTHROPIC_KEY: "x" },
+      t.dir,
+    );
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes("claude-sonnet-5"));
+  } finally {
+    t.cleanup();
+  }
+});
