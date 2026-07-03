@@ -12,6 +12,8 @@
  *   datum resolve <ref> [--json|--env] [--reveal] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
  *   datum list [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
  *   datum doctor [--probe] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
+ *   datum discover <provider> [--json] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
+ *   datum test-connection <provider> [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
  *   datum sync opencode [--dry-run] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
  *   datum sync claude-code --role <name> [--dry-run] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
  *
@@ -42,6 +44,8 @@ import {
   mergeIntoClaudeCodeSettings,
   CLAUDE_CODE_FORMAT_VERSION,
   runDoctor,
+  discoverModels,
+  testConnection,
   DatumError,
 } from "../dist/src/index.js";
 
@@ -94,6 +98,9 @@ function die(msg, code = 1) {
   process.exit(code);
 }
 
+/** Shared status-icon map for doctor/test-connection check output. */
+const STATUS_SYMBOL = { pass: "ok  ", warn: "warn", fail: "FAIL", skip: "skip" };
+
 const CONFIG_FLAGS_USAGE =
   "  --cwd <dir>               Working dir for the repo-level .datum/config.json\n" +
   "  --repo-config-path <file> Explicit repo config path (overrides --cwd)\n" +
@@ -105,6 +112,8 @@ Usage:
   datum resolve <ref> [--json|--env] [--reveal] [config flags]   Resolve a role or model ref
   datum list [config flags]                                       List providers and roles (+ key status)
   datum doctor [--probe] [config flags]                           Diagnose config; --probe makes one live call/provider
+  datum discover <provider> [--json] [config flags]               Fetch the live model list from an openai-compatible provider
+  datum test-connection <provider> [config flags]                 Validate auth + reachability for one provider
   datum sync opencode [--dry-run] [config flags]                  Generate opencode provider config from the registry
   datum sync claude-code --role <name> [--dry-run] [config flags] Generate Claude Code settings env block for a role
 
@@ -219,11 +228,47 @@ function cmdList() {
 async function cmdDoctor() {
   const opts = configOpts();
   const report = await runDoctor({ probe: has("--probe"), ...opts });
-  const symbol = { pass: "ok  ", warn: "warn", fail: "FAIL", skip: "skip" };
   for (const c of report.checks) {
-    process.stdout.write(`[${symbol[c.status]}] ${c.name}: ${c.detail}\n`);
+    process.stdout.write(`[${STATUS_SYMBOL[c.status]}] ${c.name}: ${c.detail}\n`);
   }
   process.stdout.write(report.ok ? "\ndoctor: OK\n" : "\ndoctor: FAILED\n");
+  if (!report.ok) process.exit(1);
+}
+
+async function cmdDiscover() {
+  const [, providerId] = positionals();
+  if (!providerId) die("discover: missing <provider>.\n\n" + USAGE);
+  const asJson = has("--json");
+  const opts = configOpts();
+
+  const result = await discoverModels(providerId, opts);
+
+  if (asJson) {
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    if (!result.ok) process.exit(1);
+    return;
+  }
+
+  if (result.ok) {
+    process.stdout.write(`provider: ${providerId}\n`);
+    process.stdout.write(`models (${result.models.length}):\n`);
+    for (const id of result.models) process.stdout.write(`  - ${id}\n`);
+  } else {
+    process.stderr.write(`discover: FAILED (${result.errorClass}): ${result.detail}\n`);
+  }
+  if (!result.ok) process.exit(1);
+}
+
+async function cmdTestConnection() {
+  const [, providerId] = positionals();
+  if (!providerId) die("test-connection: missing <provider>.\n\n" + USAGE);
+  const opts = configOpts();
+
+  const report = await testConnection(providerId, opts);
+  for (const c of report.checks) {
+    process.stdout.write(`[${STATUS_SYMBOL[c.status]}] ${c.name}: ${c.detail}\n`);
+  }
+  process.stdout.write(report.ok ? "\ntest-connection: OK\n" : "\ntest-connection: FAILED\n");
   if (!report.ok) process.exit(1);
 }
 
@@ -319,6 +364,12 @@ async function main() {
         break;
       case "doctor":
         await cmdDoctor();
+        break;
+      case "discover":
+        await cmdDiscover();
+        break;
+      case "test-connection":
+        await cmdTestConnection();
         break;
       case "sync":
         cmdSync();

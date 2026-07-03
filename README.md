@@ -6,8 +6,9 @@ config every tool wants.** Datum answers a single question — *which backend,
 which model, whose key, what base URL* — for a role name or a `model@provider`
 ref, and hands back a plain `{ provider, kind, baseUrl?, apiKey, model }` object.
 It abstracts *configuration resolution, not invocation*: it imports no AI SDK,
-wraps no runtime, and makes no model calls (with one narrow, opt-in exception:
-`datum doctor --probe`).
+wraps no runtime, and makes no model calls (with three narrow, opt-in
+exceptions: `datum doctor --probe`, `datum discover`, and `datum
+test-connection`).
 
 ## Install
 
@@ -129,6 +130,8 @@ returns an `auth` status (kind + reference + availability) instead of the value.
 datum resolve <ref> [--json|--env] [--reveal] [config flags]      Resolve a role or model ref
 datum list [config flags]                                          Providers + roles, with auth status
 datum doctor [--probe] [config flags]                               Diagnose config; --probe makes ONE live call/provider
+datum discover <provider> [--json] [config flags]                   Fetch the live model list from an openai-compatible provider
+datum test-connection <provider> [config flags]                     Validate auth + reachability for one provider; exits non-zero on failure
 datum sync opencode [--dry-run] [config flags]                      Generate opencode's provider block from the registry
 datum sync claude-code --role <name> [--dry-run] [config flags]     Generate Claude Code's settings env block for a role
 ```
@@ -136,10 +139,19 @@ datum sync claude-code --role <name> [--dry-run] [config flags]     Generate Cla
 - No command prints the API key value unless `--reveal` is passed.
 - `datum doctor` checks that files parse, every role resolves, and every
   provider's key backend is reachable-in-principle (env var set, or keychain/op
-  tool present — **the secret is not read**). `--probe` is the **single** place
-  datum touches the network: one `max_tokens: 1` request per provider —
-  `POST /v1/messages` for `anthropic-compatible`, `POST /chat/completions` for
-  `openai-compatible` — to confirm endpoint + key + model actually work.
+  tool present — **the secret is not read**). `--probe` makes one
+  `max_tokens: 1` request per provider — `POST /v1/messages` for
+  `anthropic-compatible`, `POST /chat/completions` for `openai-compatible` —
+  to confirm endpoint + key + model actually work.
+- `datum discover <provider>` fetches the live model ids an
+  `openai-compatible` provider's `GET {baseUrl}/models` endpoint actually
+  offers and displays them (`--json` for structured output). Not supported for
+  other provider kinds.
+- `datum test-connection <provider>` validates auth + reachability for any
+  configured provider (any `kind`) and exits non-zero on failure, with each
+  check's pass/fail printed and the failure distinguished into one of three
+  classes: bad/missing credentials, an unreachable endpoint, or a response
+  that is not shaped like the expected `openai-compatible` `/models` payload.
 - `datum sync opencode` emits opencode's native `provider` block (confirmed
   against opencode's published `config.json` schema). It writes `env: ["VAR"]`,
   not `options.apiKey` — the key stays in the environment.
@@ -180,11 +192,11 @@ $ datum list --user-config-path ~/.config/kontour/work.json
 Datum's `kind` is open, but each consumer speaks a subset. What datum can
 generate/route for each kind today:
 
-| kind                    | `resolve()` | opencode (`sync opencode`) | Claude Code (`sync claude-code`) | traverse | doctor `--probe`               |
-| ----------------------- | :---------: | :------------------------: | :------------------------------: | :------: | ------------------------------ |
-| `anthropic-compatible`  |     yes     |  yes (`@ai-sdk/anthropic`) |               yes                |   yes    | `POST /v1/messages`            |
-| `openai-compatible`     |     yes     | yes (`@ai-sdk/openai-compatible`) |         no (Anthropic API only)  |   no     | `POST /chat/completions`       |
-| other (open enum)       |     yes     |  skipped (warning)         |         no                       |   n/a    | skipped                        |
+| kind                    | `resolve()` | opencode (`sync opencode`) | Claude Code (`sync claude-code`) | traverse | doctor `--probe`               | `discover`          | `test-connection`                     |
+| ----------------------- | :---------: | :------------------------: | :------------------------------: | :------: | ------------------------------ | ------------------- | -------------------------------------- |
+| `anthropic-compatible`  |     yes     |  yes (`@ai-sdk/anthropic`) |               yes                |   yes    | `POST /v1/messages`            | not supported        | yes (reuses `doctor --probe`'s check)  |
+| `openai-compatible`     |     yes     | yes (`@ai-sdk/openai-compatible`) |         no (Anthropic API only)  |   no     | `POST /chat/completions`       | `GET /models`        | yes (full 3-class diagnosis)           |
+| other (open enum)       |     yes     |  skipped (warning)         |         no                       |   n/a    | skipped                        | not supported        | skipped                                |
 
 Auth-backend support per consumer: `resolve()`, Claude Code, and traverse work
 with all three auth kinds (env / keychain / op). **opencode expresses env-var
@@ -203,8 +215,9 @@ traverse today speaks **anthropic-compatible only**.
 - **Not a router at call time.** It picks the backend for a ref up front; it
   does not load-balance, retry, or fail over live requests.
 
-The one deliberate exception is `datum doctor --probe`, which makes a single
-minimal live call purely to verify a provider is reachable.
+The deliberate exceptions are `datum doctor --probe`, `datum discover`, and
+`datum test-connection`, each a single minimal opt-in live call made only
+when explicitly invoked.
 
 ## Design
 

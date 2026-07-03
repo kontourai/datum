@@ -4,8 +4,11 @@ Datum is `@kontourai/datum`: the portfolio's AI provider/model/role registry. It
 abstracts CONFIGURATION RESOLUTION, not invocation — it answers "which backend,
 which model, whose key, what base URL" for a role or `model@provider` ref and
 returns inert `{ provider, kind, baseUrl?, apiKey, model }` data. It imports no
-AI SDK and makes no model calls. The one narrow exception is
-`datum doctor --probe` (a single opt-in live reachability call per provider).
+AI SDK and makes no model calls. The deliberate exceptions are
+`datum doctor --probe` (a single opt-in live reachability call per provider),
+`datum discover` (fetches an openai-compatible provider's live model list),
+and `datum test-connection` (validates auth + reachability for one provider)
+— all three are explicit, opt-in commands.
 
 ## Source Of Truth
 
@@ -25,7 +28,7 @@ AI SDK and makes no model calls. The one narrow exception is
 - Auth is by reference only: `{ env: "VAR_NAME" }`, never a literal secret.
 - Zero runtime dependencies; validation is hand-rolled (no ajv in the runtime).
 - No command prints a secret value without `--reveal`.
-- Only `doctor --probe` may touch the network.
+- Only `doctor --probe`, `discover`, and `test-connection` may touch the network.
 
 ## Useful Commands
 

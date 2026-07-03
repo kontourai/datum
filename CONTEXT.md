@@ -4,9 +4,11 @@ Datum is `@kontourai/datum`, the Kontour portfolio's AI provider/model/role
 registry. It abstracts CONFIGURATION RESOLUTION, not invocation — it answers
 "which backend, which model, whose key, what base URL" for a role or
 `model@provider` ref and returns inert `{ provider, kind, baseUrl?, apiKey,
-model }` data. It imports no AI SDK and makes no model calls. The one narrow
-exception is `datum doctor --probe` (a single opt-in live reachability call
-per provider).
+model }` data. It imports no AI SDK and makes no model calls. The deliberate
+exceptions are `datum doctor --probe` (a single opt-in live reachability call
+per provider), `datum discover` (fetches an openai-compatible provider's live
+model list), and `datum test-connection` (validates auth + reachability for
+one provider) — all three are explicit, opt-in commands.
 
 ## Term Glossary
 
@@ -14,8 +16,9 @@ per provider).
   not — invocation. Given a role name or a `model@provider` ref, datum
   answers *which backend, which model, whose key, what base URL* and stops;
   the caller's own SDK makes any model call. No AI SDK dependency, no API
-  call, no runtime wrapping lives in the resolver itself. The single, opt-in
-  exception is `datum doctor --probe`.
+  call, no runtime wrapping lives in the resolver itself. The deliberate,
+  opt-in exceptions are `datum doctor --probe`, `datum discover`, and `datum
+  test-connection`.
 - **Config Precedence**: the two independent layers datum composes to answer
   a ref. The FILE layer deep-merges user-level
   `~/.config/kontour/datum.json` (base) under repo-level `.datum/config.json`
