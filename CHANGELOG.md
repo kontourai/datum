@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0](https://github.com/kontourai/datum/compare/v0.4.0...v0.5.0) (2026-07-03)
+
+
+### Features
+
+* add model auto-discovery and test-connection command ([181bc6b](https://github.com/kontourai/datum/commit/181bc6bf01918e3ea722154e3b351dab409e1cc4)), closes [#5](https://github.com/kontourai/datum/issues/5)
+* model auto-discovery from OpenAI-compatible /models + `datum test-connection` ([#5](https://github.com/kontourai/datum/issues/5)) ([f7e21d9](https://github.com/kontourai/datum/commit/f7e21d95b88f62bb2fea0bbc94fee7c9bda2a837))
+
 ## [0.4.0](https://github.com/kontourai/datum/compare/v0.3.0...v0.4.0) (2026-07-03)
 
 
