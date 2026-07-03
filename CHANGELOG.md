@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/kontourai/datum/compare/v0.3.0...v0.4.0) (2026-07-03)
+
+
+### Features
+
+* --cwd/--repo-config-path/--user-config-path CLI flags; adopt ADR-freeze/decision-registry convention ([cf0edb0](https://github.com/kontourai/datum/commit/cf0edb0b0d72d25e724485cfc64775828a228245))
+* add --cwd/--repo-config-path/--user-config-path flags to all CLI subcommands ([98a2d4b](https://github.com/kontourai/datum/commit/98a2d4b9823452cbb400ee50502b89d646db27b0))
+
 ## [0.3.0](https://github.com/kontourai/datum/compare/v0.2.0...v0.3.0)
 
 ### Features
