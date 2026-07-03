@@ -208,9 +208,12 @@ minimal live call purely to verify a provider is reachable.
 
 ## Design
 
-See [`docs/design.md`](./docs/design.md) for precedence rules, the
-secret-reference-only decision, the generator-not-wrapper principle, and the
-slice roadmap.
+Design decisions are frozen ADRs at [`docs/adr/`](./docs/adr/index.md)
+(precedence rules, the secret-reference-only decision, the
+generator-not-wrapper principle, and the slice roadmap — immutable, split one
+decision per file). Current/living decisions and their vocabulary are the
+topic-keyed registry at [`docs/decisions/`](./docs/decisions/index.md) and
+[`CONTEXT.md`](./CONTEXT.md#term-glossary).
 
 ## Publishing (maintainers)
 

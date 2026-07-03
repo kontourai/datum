@@ -37,7 +37,10 @@
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test dist/tests/*.test.js",
     "check:pack": "node scripts/check-package-contents.mjs",
-    "verify": "npm run typecheck && npm test && npm run check:pack"
+    "check:decisions": "node scripts/check-decisions.cjs check",
+    "gen:decisions-index": "node scripts/check-decisions.cjs gen-index",
+    "freeze:adrs": "node scripts/freeze-adrs.mjs",
+    "verify": "npm run check:decisions && npm run typecheck && npm test && npm run check:pack"
   },
   "dependencies": {},
   "devDependencies": {
