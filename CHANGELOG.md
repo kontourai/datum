@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/kontourai/datum/compare/v0.5.0...v0.6.0) (2026-07-04)
+
+
+### Features
+
+* HTTPS policy for network commands — block plaintext to non-loopback with --allow-insecure escape ([04c7b30](https://github.com/kontourai/datum/commit/04c7b3002d56c4435cd58ea3f62fda786deaca09)), closes [#9](https://github.com/kontourai/datum/issues/9)
+* HTTPS policy for network commands (doctor --probe, discover, test-connection) ([ed90f7b](https://github.com/kontourai/datum/commit/ed90f7b9b60fd9aa673d79edecea2b30f9013528))
+
 ## [0.5.0](https://github.com/kontourai/datum/compare/v0.4.0...v0.5.0) (2026-07-03)
 
 
