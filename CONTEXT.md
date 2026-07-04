@@ -63,6 +63,16 @@ one provider) — all three are explicit, opt-in commands.
   fallback) runs `publish-npm.yml`, which verifies, guards (tag matches
   `package.json`, tagged commit on `main`, skip if already published), and
   publishes over OIDC with `--provenance`.
+- **HTTPS Enforcement**: the policy `datum doctor --probe`, `datum
+  discover`, and `datum test-connection` apply to every outbound request
+  before it is sent. `https://` is always allowed; loopback `http://`
+  (`localhost`, the `127.0.0.0/8` range, `::1`) is allowed silently, since
+  that is how Ollama/LM Studio-style local providers are typically
+  configured. A non-loopback `http://` `baseUrl` is blocked by default with
+  an actionable error; passing `--allow-insecure` proceeds anyway but still
+  emits a warning. Enforced once via `enforceHttpsPolicy()` in
+  `src/security.ts`, consumed by all three network-touching functions
+  rather than re-implemented per command.
 
 ## Decision Registry
 

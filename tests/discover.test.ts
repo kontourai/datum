@@ -312,3 +312,158 @@ test("testConnection: unsupported kind is skipped, not failed", async () => {
   assert.equal(connect?.status, "skip");
   assert.equal(report.ok, true);
 });
+
+// --- HTTPS enforcement policy (datum#9) ---------------------------------
+
+test("fetchOpenaiCompatibleModels: non-loopback http:// baseUrl is blocked BEFORE fetchImpl is ever called", async () => {
+  let calls = 0;
+  const spy: DiscoverFetchLike = async (...args) => {
+    calls++;
+    return modelsFetch(["x"])(...args);
+  };
+  const result = await fetchOpenaiCompatibleModels({ baseUrl: "http://example.com", apiKey: "k" }, spy);
+  assert.equal(result.ok, false);
+  assert.equal(result.errorClass, "insecure");
+  assert.ok(result.detail.includes("http://example.com"));
+  assert.ok(result.detail.includes("https"));
+  assert.ok(result.detail.includes("--allow-insecure"));
+  assert.equal(calls, 0);
+});
+
+test("fetchOpenaiCompatibleModels: loopback http:// baseUrl proceeds, fetchImpl is called", async () => {
+  let calls = 0;
+  const spy: DiscoverFetchLike = async (...args) => {
+    calls++;
+    return modelsFetch(["m1"])(...args);
+  };
+  const result = await fetchOpenaiCompatibleModels({ baseUrl: "http://127.0.0.1:4444", apiKey: "k" }, spy);
+  assert.equal(result.ok, true);
+  assert.equal(calls, 1);
+  assert.equal(result.warning, undefined);
+});
+
+test("fetchOpenaiCompatibleModels: non-loopback http:// with allowInsecure proceeds and warns", async () => {
+  let calls = 0;
+  const spy: DiscoverFetchLike = async (...args) => {
+    calls++;
+    return modelsFetch(["m1"])(...args);
+  };
+  const result = await fetchOpenaiCompatibleModels(
+    { baseUrl: "http://example.com", apiKey: "k", allowInsecure: true },
+    spy,
+  );
+  assert.equal(result.ok, true);
+  assert.equal(calls, 1);
+  assert.ok(result.warning);
+  assert.ok(result.warning!.includes("http://example.com"));
+});
+
+const OAI_INSECURE_CONFIG: DatumConfig = {
+  providers: {
+    oai: {
+      kind: "openai-compatible",
+      baseUrl: "http://example.com",
+      auth: { env: "OAI_KEY" },
+      models: ["gpt-4o"],
+    },
+  },
+};
+
+const ANTHROPIC_INSECURE_CONFIG: DatumConfig = {
+  providers: {
+    zai: {
+      kind: "anthropic-compatible",
+      baseUrl: "http://example.com",
+      auth: { env: "TEST_ZAI_KEY" },
+      models: ["glm-5.2"],
+    },
+  },
+};
+
+test("discoverModels: non-loopback http:// baseUrl blocks discovery, no fetch call", async () => {
+  let calls = 0;
+  const spy: DiscoverFetchLike = async (...args) => {
+    calls++;
+    return modelsFetch(["x"])(...args);
+  };
+  const result = await discoverModels("oai", {
+    config: OAI_INSECURE_CONFIG,
+    env: { OAI_KEY: "k" },
+    fetchImpl: spy,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.errorClass, "insecure");
+  assert.equal(calls, 0);
+});
+
+test("discoverModels: allowInsecure lets a non-loopback http:// baseUrl proceed and warns", async () => {
+  const result = await discoverModels("oai", {
+    config: OAI_INSECURE_CONFIG,
+    env: { OAI_KEY: "k" },
+    fetchImpl: modelsFetch(["gpt-4o"]),
+    allowInsecure: true,
+  });
+  assert.equal(result.ok, true);
+  assert.ok(result.warning);
+  assert.ok(result.warning!.includes("http://example.com"));
+});
+
+test("testConnection: openai-compatible non-loopback http:// baseUrl blocks the connect check, errorClass 'insecure'", async () => {
+  let calls = 0;
+  const spy: DiscoverFetchLike = async (...args) => {
+    calls++;
+    return modelsFetch(["x"])(...args);
+  };
+  const report = await testConnection("oai", {
+    config: OAI_INSECURE_CONFIG,
+    env: { OAI_KEY: "k" },
+    fetchImpl: spy,
+  });
+  assert.equal(report.ok, false);
+  const connect = report.checks.find((c) => c.name === "connect");
+  assert.equal(connect?.errorClass, "insecure");
+  assert.equal(calls, 0);
+});
+
+test("testConnection: anthropic-compatible non-loopback http:// baseUrl blocks the connect check via the insecure: detail-prefix classification (not generic incompatible)", async () => {
+  let calls = 0;
+  const spy: DiscoverFetchLike = async (...args) => {
+    calls++;
+    return { ok: true, status: 200, text: async () => "" };
+  };
+  const report = await testConnection("zai", {
+    config: ANTHROPIC_INSECURE_CONFIG,
+    env: { TEST_ZAI_KEY: "k" },
+    fetchImpl: spy,
+  });
+  assert.equal(report.ok, false);
+  const connect = report.checks.find((c) => c.name === "connect");
+  assert.equal(connect?.errorClass, "insecure");
+  assert.notEqual(connect?.errorClass, "incompatible");
+  assert.equal(calls, 0);
+});
+
+test("testConnection: openai-compatible allowInsecure proceeds through non-loopback http:// and records a warning", async () => {
+  const report = await testConnection("oai", {
+    config: OAI_INSECURE_CONFIG,
+    env: { OAI_KEY: "k" },
+    fetchImpl: modelsFetch(["gpt-4o"]),
+    allowInsecure: true,
+  });
+  assert.equal(report.ok, true);
+  assert.ok(report.warnings.length > 0);
+  assert.ok(report.warnings.some((w) => w.includes("http://example.com")));
+});
+
+test("testConnection: anthropic-compatible allowInsecure proceeds through non-loopback http:// and records a warning", async () => {
+  const okFetch2: DiscoverFetchLike = async () => ({ ok: true, status: 200, text: async () => "" });
+  const report = await testConnection("zai", {
+    config: ANTHROPIC_INSECURE_CONFIG,
+    env: { TEST_ZAI_KEY: "k" },
+    fetchImpl: okFetch2,
+    allowInsecure: true,
+  });
+  assert.equal(report.ok, true);
+  assert.ok(report.warnings.length > 0);
+  assert.ok(report.warnings.some((w) => w.includes("http://example.com")));
+});

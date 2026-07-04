@@ -129,9 +129,9 @@ returns an `auth` status (kind + reference + availability) instead of the value.
 ```
 datum resolve <ref> [--json|--env] [--reveal] [config flags]      Resolve a role or model ref
 datum list [config flags]                                          Providers + roles, with auth status
-datum doctor [--probe] [config flags]                               Diagnose config; --probe makes ONE live call/provider
-datum discover <provider> [--json] [config flags]                   Fetch the live model list from an openai-compatible provider
-datum test-connection <provider> [config flags]                     Validate auth + reachability for one provider; exits non-zero on failure
+datum doctor [--probe] [--allow-insecure] [config flags]            Diagnose config; --probe makes ONE live call/provider
+datum discover <provider> [--json] [--allow-insecure] [config flags]  Fetch the live model list from an openai-compatible provider
+datum test-connection <provider> [--allow-insecure] [config flags]  Validate auth + reachability for one provider; exits non-zero on failure
 datum sync opencode [--dry-run] [config flags]                      Generate opencode's provider block from the registry
 datum sync claude-code --role <name> [--dry-run] [config flags]     Generate Claude Code's settings env block for a role
 ```
@@ -152,6 +152,15 @@ datum sync claude-code --role <name> [--dry-run] [config flags]     Generate Cla
   check's pass/fail printed and the failure distinguished into one of three
   classes: bad/missing credentials, an unreachable endpoint, or a response
   that is not shaped like the expected `openai-compatible` `/models` payload.
+- `--allow-insecure` (accepted by `doctor --probe`, `discover`, and
+  `test-connection`, the 3 commands that make live requests): `https://` is
+  always allowed; loopback `http://` (`localhost`, `127.0.0.0/8`, `::1`,
+  `::ffff:127.x.x.x` — Ollama/LM Studio-style local providers) is allowed
+  silently; `http://` to any other host is blocked by default with an
+  actionable error naming the URL. `--allow-insecure` overrides the block but
+  still prints `warning: ...` to stderr every time. Redirects are followed
+  manually and the policy is re-checked on each hop, so a server cannot bounce
+  a key-bearing request from `https://` to a plaintext `http://` host.
 - `datum sync opencode` emits opencode's native `provider` block (confirmed
   against opencode's published `config.json` schema). It writes `env: ["VAR"]`,
   not `options.apiKey` — the key stays in the environment.

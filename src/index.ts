@@ -35,6 +35,13 @@ export {
   testConnection,
   fetchOpenaiCompatibleModels,
 } from "./discover.js";
+export { enforceHttpsPolicy, safeFetch } from "./security.js";
+export type {
+  HttpsPolicyOptions,
+  HttpsPolicyResult,
+  PolicyCheckedResponse,
+  SafeFetchResult,
+} from "./security.js";
 export { DatumError } from "./errors.js";
 export type { DatumErrorCode } from "./errors.js";
 export type {
