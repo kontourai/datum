@@ -27,55 +27,86 @@ import type { CheckStatus } from "./doctor.js";
 import { DatumError } from "./errors.js";
 import { resolve } from "./resolve.js";
 import { defaultSecretRunner } from "./secrets.js";
+import { safeFetch } from "./security.js";
 import type { ProviderConfig, ResolveOptions } from "./types.js";
 
 export type DiscoverFetchLike = (
   url: string,
-  init: { method: string; headers: Record<string, string> },
-) => Promise<{ ok: boolean; status: number; text: () => Promise<string> }>;
+  init: { method: string; headers: Record<string, string>; redirect?: "manual" },
+) => Promise<{
+  ok: boolean;
+  status: number;
+  text: () => Promise<string>;
+  headers?: { get(name: string): string | null };
+}>;
 
 /**
- * Three named diagnosis classes (AC3), each with a visibly distinct detail
+ * Four named diagnosis classes (AC3), each with a visibly distinct detail
  * prefix so a caller can grep/assert.match without parsing free text:
  *  - "auth"         -> credentials unavailable / MISSING_ENV / SECRET_* / auth rejected (HTTP 401|403)
  *  - "unreachable"  -> unreachable: <fetch error>
  *  - "incompatible" -> unexpected HTTP N / not valid JSON / missing expected {data:[{id}]} shape
+ *  - "insecure"     -> insecure: <detail from enforceHttpsPolicy(); request never attempted>
  */
-export type DiagnosisClass = "auth" | "unreachable" | "incompatible";
+export type DiagnosisClass = "auth" | "unreachable" | "incompatible" | "insecure";
 
 export interface DiscoverResult {
   ok: boolean;
   models: string[];
   errorClass?: DiagnosisClass;
   detail: string;
+  warning?: string;
 }
 
 /**
  * `GET {baseUrl}/models` against an openai-compatible provider's endpoint
  * (base defaults to `https://api.openai.com/v1`, same trailing-slash-strip as
  * `doctor.ts`'s probers) using `authorization: Bearer {apiKey}`. Classifies
- * every failure into one of the three DiagnosisClass values (see the
- * class-mapping table in the plan): try/catch -> "unreachable"; 401/403 ->
+ * every failure into one of the DiagnosisClass values (see the class-mapping
+ * table in the doc comment above): try/catch -> "unreachable"; 401/403 ->
  * "auth"; any other non-ok status, a non-JSON body, or a JSON body missing
  * the `{ data: [{ id }] }` shape -> "incompatible".
+ *
+ * The request is issued through `safeFetch()`, which enforces the HTTPS policy
+ * on `url` AND on every redirect target before the key-bearing request (which
+ * carries `args.apiKey` as a Bearer token) is (re-)issued, so a blocked URL
+ * never reaches `fetchImpl` and the key is never sent to it.
  */
 export async function fetchOpenaiCompatibleModels(
-  args: { baseUrl?: string; apiKey: string },
+  args: { baseUrl?: string; apiKey: string; allowInsecure?: boolean },
   fetchImpl: DiscoverFetchLike,
 ): Promise<DiscoverResult> {
   const base = (args.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
   const url = `${base}/models`;
 
-  let res: { ok: boolean; status: number; text: () => Promise<string> };
+  let outcome;
   try {
-    res = await fetchImpl(url, {
-      method: "GET",
-      headers: { authorization: `Bearer ${args.apiKey}` },
-    });
+    outcome = await safeFetch(
+      url,
+      { method: "GET", headers: { authorization: `Bearer ${args.apiKey}` } },
+      fetchImpl,
+      { allowInsecure: args.allowInsecure },
+    );
   } catch (err) {
     return { ok: false, models: [], errorClass: "unreachable", detail: `unreachable: ${(err as Error).message}` };
   }
+  if (outcome.blocked) {
+    return { ok: false, models: [], errorClass: "insecure", detail: outcome.detail! };
+  }
 
+  const result = await classifyModelsResponse(outcome.response!);
+  return outcome.warning ? { ...result, warning: outcome.warning } : result;
+}
+
+/**
+ * Map an already-fetched (and policy-cleared) `/models` response onto a
+ * `DiscoverResult`, factored out so `safeFetch()`'s `warning` can be merged
+ * onto whichever result this produces at a single point in the caller above,
+ * instead of threading it through every branch here.
+ */
+async function classifyModelsResponse(
+  res: { ok: boolean; status: number; text: () => Promise<string> },
+): Promise<DiscoverResult> {
   if (res.status === 401 || res.status === 403) {
     return { ok: false, models: [], errorClass: "auth", detail: `auth rejected (HTTP ${res.status})` };
   }
@@ -121,6 +152,7 @@ function firstModelRef(id: string, p: ProviderConfig): string {
 
 export interface DiscoverModelsOptions extends ResolveOptions {
   fetchImpl?: DiscoverFetchLike;
+  allowInsecure?: boolean;
 }
 
 /**
@@ -181,7 +213,10 @@ export async function discoverModels(
   }
 
   const fetchImpl = opts.fetchImpl ?? (globalThis.fetch as unknown as DiscoverFetchLike);
-  return fetchOpenaiCompatibleModels({ baseUrl: target.baseUrl, apiKey: target.apiKey }, fetchImpl);
+  return fetchOpenaiCompatibleModels(
+    { baseUrl: target.baseUrl, apiKey: target.apiKey, allowInsecure: opts.allowInsecure },
+    fetchImpl,
+  );
 }
 
 export interface TestConnectionCheck {
@@ -189,35 +224,40 @@ export interface TestConnectionCheck {
   status: CheckStatus;
   detail: string;
   errorClass?: DiagnosisClass;
+  warning?: string;
 }
 
 export interface TestConnectionReport {
   ok: boolean;
   checks: TestConnectionCheck[];
+  warnings: string[];
 }
 
 export interface TestConnectionOptions extends ResolveOptions {
   fetchImpl?: DiscoverFetchLike;
+  allowInsecure?: boolean;
 }
 
 /**
  * Validate a configured provider's auth + reachability (AC2), any `kind`:
- * `openai-compatible` gets full 3-class diagnosis via
- * `fetchOpenaiCompatibleModels`; `anthropic-compatible` reuses
- * `probeAnthropicCompatible` directly (zero new network code for that kind).
- * Because `probeAnthropicCompatible` never checks a `/models` shape, its
- * failures are classified by string-matching its free-text `detail`: "auth
- * rejected" -> "auth", "unreachable" -> "unreachable", and the reachable
- * else-branch below maps EVERY OTHER probe failure (e.g. an unexpected HTTP
- * status) to "incompatible" — that fallback fires and IS exercised by tests,
- * it is not dead code. Any other kind is reported "skip" (mirrors
- * `runDoctor`'s unsupported-kind handling — skip does not fail the report).
+ * `openai-compatible` gets full diagnosis via `fetchOpenaiCompatibleModels`;
+ * `anthropic-compatible` reuses `probeAnthropicCompatible` directly (zero new
+ * network code for that kind). Because `probeAnthropicCompatible` never
+ * checks a `/models` shape, its failures are classified by string-matching
+ * its free-text `detail`: "auth rejected" -> "auth", "unreachable" ->
+ * "unreachable", a leading "insecure:" prefix (from `enforceHttpsPolicy()`)
+ * -> "insecure", and the reachable else-branch below maps EVERY OTHER probe
+ * failure (e.g. an unexpected HTTP status) to "incompatible" — that fallback
+ * fires and IS exercised by tests, it is not dead code. Any other kind is
+ * reported "skip" (mirrors `runDoctor`'s unsupported-kind handling — skip
+ * does not fail the report).
  */
 export async function testConnection(
   providerId: string,
   opts: TestConnectionOptions = {},
 ): Promise<TestConnectionReport> {
   const checks: TestConnectionCheck[] = [];
+  const warnings: string[] = [];
 
   // 1. Config parse/validate.
   let loaded;
@@ -226,7 +266,7 @@ export async function testConnection(
   } catch (err) {
     const detail = err instanceof DatumError ? `${err.code}: ${err.message}` : (err as Error).message;
     checks.push({ name: "config", status: "fail", detail });
-    return { ok: false, checks };
+    return { ok: false, checks, warnings };
   }
   checks.push({ name: "config", status: "pass", detail: `parsed ${loaded.sources.length} file(s)` });
   const config = loaded.config;
@@ -240,7 +280,7 @@ export async function testConnection(
       status: "fail",
       detail: `Unknown provider "${providerId}". Known providers: ${known.length ? known.join(", ") : "(none)"}.`,
     });
-    return { ok: false, checks };
+    return { ok: false, checks, warnings };
   }
   checks.push({ name: "provider", status: "pass", detail: `${providerId} is kind "${p.kind}"` });
 
@@ -254,7 +294,7 @@ export async function testConnection(
         ? `credentials unavailable: env ${auth.ref} is not set`
         : `credentials unavailable: ${auth.kind} (${auth.ref}) backend tool ${auth.tool} not available`;
     checks.push({ name: "auth", status: "fail", detail, errorClass: "auth" });
-    return { ok: false, checks };
+    return { ok: false, checks, warnings };
   }
   checks.push({
     name: "auth",
@@ -270,7 +310,7 @@ export async function testConnection(
   } catch (err) {
     const detail = err instanceof DatumError ? `${err.code}: ${err.message}` : (err as Error).message;
     checks.push({ name: "auth", status: "fail", detail, errorClass: "auth" });
-    return { ok: false, checks };
+    return { ok: false, checks, warnings };
   }
 
   // 5. Connectivity check, dispatched by kind.
@@ -286,22 +326,27 @@ export async function testConnection(
       errorClass: "unreachable",
     };
   } else if (p.kind === "openai-compatible") {
-    const r = await fetchOpenaiCompatibleModels({ baseUrl: target.baseUrl, apiKey: target.apiKey }, fetchImpl!);
+    const r = await fetchOpenaiCompatibleModels(
+      { baseUrl: target.baseUrl, apiKey: target.apiKey, allowInsecure: opts.allowInsecure },
+      fetchImpl!,
+    );
     connect = {
       name: "connect",
       status: r.ok ? "pass" : "fail",
       detail: r.detail,
       ...(r.errorClass ? { errorClass: r.errorClass } : {}),
+      ...(r.warning ? { warning: r.warning } : {}),
     };
   } else if (p.kind === "anthropic-compatible") {
     const probe = await probeAnthropicCompatible(
-      { baseUrl: target.baseUrl, apiKey: target.apiKey, model: target.model },
+      { baseUrl: target.baseUrl, apiKey: target.apiKey, model: target.model, allowInsecure: opts.allowInsecure },
       fetchImpl!,
     );
     let errorClass: DiagnosisClass | undefined;
     if (probe.status === "fail") {
       if (probe.detail.includes("auth rejected")) errorClass = "auth";
       else if (probe.detail.includes("unreachable")) errorClass = "unreachable";
+      else if (probe.detail.startsWith("insecure:")) errorClass = "insecure";
       else errorClass = "incompatible";
     }
     connect = {
@@ -309,6 +354,7 @@ export async function testConnection(
       status: probe.status,
       detail: probe.detail,
       ...(errorClass ? { errorClass } : {}),
+      ...(probe.warning ? { warning: probe.warning } : {}),
     };
   } else {
     connect = {
@@ -317,8 +363,9 @@ export async function testConnection(
       detail: `kind "${p.kind}" has no test-connection implementation`,
     };
   }
+  if (connect.warning) warnings.push(connect.warning);
   checks.push(connect);
 
   const ok = !checks.some((c) => c.status === "fail");
-  return { ok, checks };
+  return { ok, checks, warnings };
 }

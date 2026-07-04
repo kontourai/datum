@@ -139,3 +139,138 @@ test("doctor: keychain/op key checks report availability, never read the secret"
   assert.ok(!runner.calls.some((c) => c.startsWith("readKeychain") || c.startsWith("readOp")));
   assert.equal(report.ok, true); // warnings do not fail the report
 });
+
+// --- HTTPS enforcement policy (datum#9) ---------------------------------
+
+const PROBE_FNS: Array<[string, typeof probeAnthropicCompatible | typeof probeOpenaiCompatible]> = [
+  ["probeAnthropicCompatible", probeAnthropicCompatible],
+  ["probeOpenaiCompatible", probeOpenaiCompatible],
+];
+
+for (const [label, probeFn] of PROBE_FNS) {
+  test(`${label}: non-loopback http:// baseUrl is blocked BEFORE fetchImpl is ever called`, async () => {
+    let calls = 0;
+    const spy: FetchLike = async (...args) => {
+      calls++;
+      return okFetch(...args);
+    };
+    const check = await probeFn({ baseUrl: "http://example.com", apiKey: "k", model: "m" }, spy);
+    assert.equal(check.status, "fail");
+    assert.ok(check.detail.includes("http://example.com"));
+    assert.ok(check.detail.includes("https"));
+    assert.ok(check.detail.includes("--allow-insecure"));
+    assert.equal(calls, 0);
+  });
+
+  test(`${label}: loopback http:// baseUrl proceeds, no warning`, async () => {
+    let calls = 0;
+    const spy: FetchLike = async (...args) => {
+      calls++;
+      return okFetch(...args);
+    };
+    const check = await probeFn({ baseUrl: "http://127.0.0.1:4444", apiKey: "k", model: "m" }, spy);
+    assert.equal(check.status, "pass");
+    assert.equal(calls, 1);
+    assert.equal(check.warning, undefined);
+  });
+
+  test(`${label}: non-loopback http:// with allowInsecure proceeds and warns`, async () => {
+    let calls = 0;
+    const spy: FetchLike = async (...args) => {
+      calls++;
+      return okFetch(...args);
+    };
+    const check = await probeFn(
+      { baseUrl: "http://example.com", apiKey: "k", model: "m", allowInsecure: true },
+      spy,
+    );
+    assert.equal(check.status, "pass");
+    assert.equal(calls, 1);
+    assert.ok(check.warning);
+    assert.ok(check.warning!.includes("http://example.com"));
+  });
+}
+
+test("runDoctor --probe: non-loopback http:// baseUrl blocks the probe, report is not ok", async () => {
+  const report = await runDoctor({
+    config: {
+      providers: {
+        insecure: { kind: "anthropic-compatible", baseUrl: "http://example.com", auth: { env: "I_KEY" }, models: ["m"] },
+      },
+    },
+    env: { I_KEY: "k" },
+    probe: true,
+    fetchImpl: okFetch,
+  });
+  assert.equal(report.ok, false);
+  const probe = report.checks.find((c) => c.name === "probe insecure");
+  assert.equal(probe?.status, "fail");
+  assert.ok(probe?.detail.includes("http://example.com"));
+  assert.ok(probe?.detail.includes("https"));
+  assert.ok(probe?.detail.includes("--allow-insecure"));
+  assert.equal(report.warnings.length, 0);
+});
+
+test("probe: an https:// baseUrl that redirects to non-loopback http:// is blocked at the redirect hop — the key-bearing request is never re-issued to the insecure host", async () => {
+  const seen: string[] = [];
+  const redirectToInsecure: FetchLike = async (url) => {
+    seen.push(url);
+    return {
+      ok: false,
+      status: 302,
+      headers: {
+        get: (n) => (n.toLowerCase() === "location" ? "http://evil.example/v1/chat/completions" : null),
+      },
+    };
+  };
+  const check = await probeOpenaiCompatible(
+    { baseUrl: "https://proxy.example/v1", apiKey: "k", model: "m" },
+    redirectToInsecure,
+  );
+  assert.equal(check.status, "fail");
+  assert.ok(check.detail.includes("http://evil.example"));
+  assert.ok(check.detail.toLowerCase().includes("redirect"));
+  assert.ok(check.detail.includes("--allow-insecure"));
+  // The key-bearing request reached only the configured https host, never evil.
+  assert.deepEqual(seen, ["https://proxy.example/v1/chat/completions"]);
+});
+
+test("probe: an https:// baseUrl that redirects to another https:// host is followed and the probe passes", async () => {
+  const seen: string[] = [];
+  const redirectToHttps: FetchLike = async (url) => {
+    seen.push(url);
+    if (seen.length === 1) {
+      return {
+        ok: false,
+        status: 307,
+        headers: { get: (n) => (n.toLowerCase() === "location" ? "https://relocated.example/v1/messages" : null) },
+      };
+    }
+    return { ok: true, status: 200 };
+  };
+  const check = await probeAnthropicCompatible(
+    { baseUrl: "https://old.example/v1", apiKey: "k", model: "m" },
+    redirectToHttps,
+  );
+  assert.equal(check.status, "pass");
+  assert.deepEqual(seen, ["https://old.example/v1/v1/messages", "https://relocated.example/v1/messages"]);
+});
+
+test("runDoctor --probe: allowInsecure lets the non-loopback http:// probe through and records exactly one warning", async () => {
+  const report = await runDoctor({
+    config: {
+      providers: {
+        insecure: { kind: "anthropic-compatible", baseUrl: "http://example.com", auth: { env: "I_KEY" }, models: ["m"] },
+      },
+    },
+    env: { I_KEY: "k" },
+    probe: true,
+    fetchImpl: okFetch,
+    allowInsecure: true,
+  });
+  assert.equal(report.ok, true);
+  const probe = report.checks.find((c) => c.name === "probe insecure");
+  assert.equal(probe?.status, "pass");
+  assert.equal(report.warnings.length, 1);
+  assert.ok(report.warnings[0].includes("http://example.com"));
+});

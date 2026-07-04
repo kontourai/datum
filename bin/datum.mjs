@@ -11,11 +11,19 @@
  * Commands:
  *   datum resolve <ref> [--json|--env] [--reveal] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
  *   datum list [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
- *   datum doctor [--probe] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
- *   datum discover <provider> [--json] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
- *   datum test-connection <provider> [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
+ *   datum doctor [--probe] [--allow-insecure] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
+ *   datum discover <provider> [--json] [--allow-insecure] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
+ *   datum test-connection <provider> [--allow-insecure] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
  *   datum sync opencode [--dry-run] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
  *   datum sync claude-code --role <name> [--dry-run] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
+ *
+ * HTTPS policy (doctor --probe / discover / test-connection): loopback
+ * http:// (localhost, 127.0.0.0/8, ::1, ::ffff:127.x.x.x) is always allowed.
+ * Non-loopback http:// is blocked by default with an actionable error; pass
+ * --allow-insecure to proceed anyway -- this still prints a `warning: ...`
+ * line to stderr every time. The policy is re-checked on every redirect hop
+ * (redirects are followed manually), so a server cannot bounce a key-bearing
+ * request from https:// to a plaintext http:// host.
  *
  * Config-location flags (all subcommands): thin plumbing over the library's
  * `ResolveOptions`/`loadConfig` parameters of the same name — no new
@@ -111,14 +119,20 @@ const USAGE = `datum - AI provider/model/role registry resolver
 Usage:
   datum resolve <ref> [--json|--env] [--reveal] [config flags]   Resolve a role or model ref
   datum list [config flags]                                       List providers and roles (+ key status)
-  datum doctor [--probe] [config flags]                           Diagnose config; --probe makes one live call/provider
-  datum discover <provider> [--json] [config flags]               Fetch the live model list from an openai-compatible provider
-  datum test-connection <provider> [config flags]                 Validate auth + reachability for one provider
+  datum doctor [--probe] [--allow-insecure] [config flags]         Diagnose config; --probe makes one live call/provider
+  datum discover <provider> [--json] [--allow-insecure] [config flags]  Fetch the live model list from an openai-compatible provider
+  datum test-connection <provider> [--allow-insecure] [config flags]  Validate auth + reachability for one provider
   datum sync opencode [--dry-run] [config flags]                  Generate opencode provider config from the registry
   datum sync claude-code --role <name> [--dry-run] [config flags] Generate Claude Code settings env block for a role
 
 Config flags (all subcommands):
 ${CONFIG_FLAGS_USAGE}
+HTTPS policy (doctor --probe / discover / test-connection): loopback
+http:// (localhost, 127.0.0.0/8, ::1, ::ffff:127.x.x.x) is always allowed;
+non-loopback http:// is blocked unless --allow-insecure is passed, which
+still warns to stderr. The policy is re-checked on every redirect hop, so a
+server cannot bounce a key-bearing request from https:// to plaintext http://.
+
 Secrets are never printed unless --reveal is passed.`;
 
 /** Compact, non-secret auth summary for a resolved ref. */
@@ -227,7 +241,8 @@ function cmdList() {
 
 async function cmdDoctor() {
   const opts = configOpts();
-  const report = await runDoctor({ probe: has("--probe"), ...opts });
+  const report = await runDoctor({ probe: has("--probe"), allowInsecure: has("--allow-insecure"), ...opts });
+  for (const w of report.warnings) process.stderr.write(`warning: ${w}\n`);
   for (const c of report.checks) {
     process.stdout.write(`[${STATUS_SYMBOL[c.status]}] ${c.name}: ${c.detail}\n`);
   }
@@ -241,7 +256,8 @@ async function cmdDiscover() {
   const asJson = has("--json");
   const opts = configOpts();
 
-  const result = await discoverModels(providerId, opts);
+  const result = await discoverModels(providerId, { ...opts, allowInsecure: has("--allow-insecure") });
+  if (result.warning) process.stderr.write(`warning: ${result.warning}\n`);
 
   if (asJson) {
     process.stdout.write(JSON.stringify(result, null, 2) + "\n");
@@ -264,7 +280,8 @@ async function cmdTestConnection() {
   if (!providerId) die("test-connection: missing <provider>.\n\n" + USAGE);
   const opts = configOpts();
 
-  const report = await testConnection(providerId, opts);
+  const report = await testConnection(providerId, { ...opts, allowInsecure: has("--allow-insecure") });
+  for (const w of report.warnings) process.stderr.write(`warning: ${w}\n`);
   for (const c of report.checks) {
     process.stdout.write(`[${STATUS_SYMBOL[c.status]}] ${c.name}: ${c.detail}\n`);
   }

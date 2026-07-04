@@ -14,6 +14,7 @@ Numbered ADRs under `docs/adr/` are frozen history and are not listed here.
 | [config-precedence](./config-precedence.md) | needs-decision | Config precedence |
 | [config-validation](./config-validation.md) | needs-decision | Config validation |
 | [configuration-resolution](./configuration-resolution.md) | needs-decision | Configuration resolution |
+| [https-enforcement](./https-enforcement.md) | current | HTTPS enforcement |
 | [provider-kinds](./provider-kinds.md) | needs-decision | Provider kinds |
 | [release-automation](./release-automation.md) | needs-decision | Release automation |
 | [secret-references](./secret-references.md) | needs-decision | Secret references |
