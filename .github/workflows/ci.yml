@@ -29,7 +29,7 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install
-        run: npm ci
+        run: npm ci --ignore-scripts --no-fund --no-audit
 
       - name: Verify
         run: npm run verify

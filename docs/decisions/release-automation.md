@@ -20,8 +20,10 @@ scripts disabled in a clean consumer, imports the public API, and runs the CLI.
 Workflow authority is staged. A read-only preflight proves that the ref is a
 `v*` tag matching `package.json` and that its commit is on main. Verification
 runs without OIDC. Only the final `npm-publish` environment job receives an ID
-token; it fails closed on registry lookup errors and publishes the exact
-previously validated tarball with provenance and lifecycle scripts disabled.
+token; dependency installation cannot run lifecycle scripts in any workflow.
+The publish job accepts only a structured npm `E404` as not-yet-published,
+fails closed on every other registry error, and publishes the exact previously
+validated tarball with provenance and lifecycle scripts disabled.
 
 Actions are pinned to reviewed commits and the Release App token is scoped to
 this repository with only contents and pull-request write access. CI, Release

@@ -62,7 +62,7 @@ jobs:
           cache: npm
 
       - name: Install
-        run: npm ci --no-fund --no-audit
+        run: npm ci --ignore-scripts --no-fund --no-audit
 
       - name: Verify
         run: npm run verify
@@ -88,24 +88,27 @@ jobs:
           package-manager-cache: false
 
       - name: Install
-        run: npm ci --no-fund --no-audit
+        run: npm ci --ignore-scripts --no-fund --no-audit
 
       - name: Check Published Version
         id: published
         run: |
+          VIEW_JSON="${RUNNER_TEMP}/npm-view.json"
+          VIEW_ERROR="${RUNNER_TEMP}/npm-view.stderr"
           set +e
           PACKAGE_NAME=$(node -p "JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).name")
           PACKAGE_VERSION=$(node -p "JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version")
-          VIEW_OUTPUT=$(npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version --json 2>&1)
+          npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version --json > "${VIEW_JSON}" 2> "${VIEW_ERROR}"
           VIEW_STATUS=$?
           set -e
           if [ "${VIEW_STATUS}" -eq 0 ]; then
             echo "published=true" >> "${GITHUB_OUTPUT}"
             echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is already published; skipping npm publish."
-          elif printf '%s' "${VIEW_OUTPUT}" | grep -Eq 'E404|404 Not Found'; then
+          elif node -e 'const fs = require("node:fs"); let value; try { value = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch {} process.exit(value?.error?.code === "E404" ? 0 : 1)' "${VIEW_JSON}"; then
             echo "published=false" >> "${GITHUB_OUTPUT}"
           else
-            printf '%s\n' "${VIEW_OUTPUT}" >&2
+            cat "${VIEW_JSON}" >&2
+            cat "${VIEW_ERROR}" >&2
             exit "${VIEW_STATUS}"
           fi
 
