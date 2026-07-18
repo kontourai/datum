@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   add-to-project:
-    uses: kontourai/.github/.github/workflows/add-issue-to-project.yml@main
+    uses: kontourai/.github/.github/workflows/add-issue-to-project.yml@a7d2a9a7658c799ea5ef3aadd9ef2c9c042c2cb2
     secrets:
       ADD_TO_PROJECT_PAT: ${{ secrets.ADD_TO_PROJECT_PAT }}
-
