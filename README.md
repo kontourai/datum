@@ -18,9 +18,8 @@ npm install @kontourai/datum
 
 Node >= 22. Zero runtime dependencies.
 
-> Status: publishing is staged (workflows, provenance, release automation are in
-> the repo) but the first `@kontourai/datum` release is **on hold pending owner
-> ratification**. Until then, consume it from the repo.
+> Status: `@kontourai/datum` is published. Hosted release workflows remain
+> manual-only while CI is out of budget; local verification is authoritative.
 
 ## Config
 
@@ -239,17 +238,25 @@ topic-keyed registry at [`docs/decisions/`](./docs/decisions/index.md) and
 
 ## Publishing (maintainers)
 
-Release automation mirrors traverse: release-please opens/refreshes a release PR
-from conventional commits; merging it tags `vX.Y.Z`; the tag (or the
-release-please `workflow_dispatch` fallback) runs `publish-npm.yml`, which
-verifies, guards (tag matches `package.json`, tagged commit on `main`, skip if
-already published), and runs `npm publish --access public --provenance` over
-OIDC.
+Release Please, CI, and npm publication are manual-only while hosted CI is out
+of budget. `npm run verify` is the authoritative local gate: it checks the exact
+tarball allowlist, installs that tarball in a clean consumer, imports the public
+API, and runs `datum --help`. `prepublishOnly` enforces the same gate for local
+publication.
 
-One-time owner setup on npmjs.com after the first successful publish: configure a
-**trusted publisher** for `@kontourai/datum` (repo `kontourai/datum`, workflow
-`.github/workflows/publish-npm.yml`) so future OIDC publishes need no token, and
-enable provenance display. See the same step in traverse's package settings.
+The publish workflow first verifies the `vX.Y.Z` ref, package version, and main
+ancestry in a read-only job. After the Node 22/24 matrix passes, a no-OIDC job
+builds, validates, hashes, and uploads the exact tarball. The protected publish
+job does not check out or execute repository code: it downloads and verifies
+that artifact, fails closed on registry errors except for a structured npm
+`E404`, and publishes it with provenance and lifecycle scripts disabled.
+
+Owner activation on npmjs.com: configure a **trusted publisher** for
+`@kontourai/datum` with organization `kontourai`, repository `datum`, workflow
+filename `publish-npm.yml`, environment `npm-publish`, and only the `npm
+publish` allowed action. Enable provenance display. Automatic triggers should
+be restored only with explicit hosted-budget approval; this is tracked in
+issue #17.
 
 ## License
 

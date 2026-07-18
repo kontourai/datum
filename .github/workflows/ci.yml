@@ -1,16 +1,13 @@
 name: CI
 
 on:
-  pull_request:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   # Suite-wide secret-scan gate, one normative source (kontourai/.github).
   secret-scan:
     name: Secret Scan
-    uses: kontourai/.github/.github/workflows/secret-scan.yml@main
+    uses: kontourai/.github/.github/workflows/secret-scan.yml@a7d2a9a7658c799ea5ef3aadd9ef2c9c042c2cb2
     permissions:
       contents: read
 
@@ -22,17 +19,17 @@ jobs:
         node-version: ['22', '24']
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
           cache-dependency-path: package-lock.json
 
       - name: Install
-        run: npm ci
+        run: npm ci --ignore-scripts --no-fund --no-audit
 
       - name: Verify
         run: npm run verify

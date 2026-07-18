@@ -1,73 +1,30 @@
 name: Publish NPM
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
 
-# Serialize publish runs so a duplicate trigger (the release tag push and a
-# workflow_dispatch firing within seconds of each other) cannot race: the second
-# run waits for the first to finish, then the "Check Published Version" step sees
-# the version already on npm and skips — instead of E403'ing on a double publish.
 concurrency:
   group: publish-npm
   cancel-in-progress: false
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  verify:
+  preflight:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node-version: ['22', '24']
     steps:
+      - name: Verify Tag Ref
+        run: |
+          if [[ "${GITHUB_REF}" != refs/tags/v* ]]; then
+            echo "Publish must be dispatched at a v* tag, received ${GITHUB_REF}" >&2
+            exit 1
+          fi
+
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'npm'
-
-      - name: Install
-        run: npm ci --no-fund --no-audit
-
-      - name: Verify
-        run: npm run verify
-
-      - name: Pack Dry Run
-        run: npm pack --dry-run
-
-  publish:
-    needs: verify
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
-          package-manager-cache: false
-
-      - name: Install
-        run: npm ci --no-fund --no-audit
 
       - name: Verify Tag Matches Package Version
         run: |
@@ -79,28 +36,147 @@ jobs:
 
       - name: Verify Tagged Commit Is On Main
         run: |
-          git fetch origin main --depth=1
+          git fetch origin main
           if ! git merge-base --is-ancestor "${GITHUB_SHA}" "FETCH_HEAD"; then
-            echo "Tagged commit ${GITHUB_SHA} is not reachable from the fetched origin/main tip" >&2
+            echo "Tagged commit ${GITHUB_SHA} is not reachable from origin/main" >&2
             exit 1
           fi
 
-      - name: Check Published Version
-        id: published
+  verify:
+    needs: preflight
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['22', '24']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install
+        run: npm ci --ignore-scripts --no-fund --no-audit
+
+      - name: Verify
+        run: npm run verify
+
+  package:
+    needs: [preflight, verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      filename: ${{ steps.package.outputs.filename }}
+      package_name: ${{ steps.package.outputs.package_name }}
+      package_version: ${{ steps.package.outputs.package_version }}
+      sha512: ${{ steps.package.outputs.sha512 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+
+      - name: Install
+        run: npm ci --ignore-scripts --no-fund --no-audit
+
+      - name: Build And Validate Exact Package
+        id: package
         run: |
           PACKAGE_NAME=$(node -p "JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).name")
           PACKAGE_VERSION=$(node -p "JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version")
-          if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
+          PACKAGE_DIR="${RUNNER_TEMP}/datum-package"
+          mkdir -p "${PACKAGE_DIR}"
+          DATUM_PACK_DESTINATION="${PACKAGE_DIR}" npm run check:pack
+          PACKAGE_PATH="${PACKAGE_DIR}/kontourai-datum-${GITHUB_REF_NAME#v}.tgz"
+          test -f "${PACKAGE_PATH}"
+          PACKAGE_FILENAME=$(basename "${PACKAGE_PATH}")
+          PACKAGE_SHA512=$(shasum -a 512 "${PACKAGE_PATH}" | awk '{print $1}')
+          echo "${PACKAGE_SHA512}  ${PACKAGE_FILENAME}"
+          echo "filename=${PACKAGE_FILENAME}" >> "${GITHUB_OUTPUT}"
+          echo "package_name=${PACKAGE_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "package_version=${PACKAGE_VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "sha512=${PACKAGE_SHA512}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload Validated Package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: datum-package-${{ github.ref_name }}
+          path: ${{ runner.temp }}/datum-package/${{ steps.package.outputs.filename }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  publish:
+    needs: [preflight, verify, package]
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+
+      - name: Download Validated Package
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: datum-package-${{ github.ref_name }}
+          path: ${{ runner.temp }}/datum-package
+
+      - name: Verify Package Digest
+        env:
+          EXPECTED_SHA512: ${{ needs.package.outputs.sha512 }}
+          PACKAGE_FILENAME: ${{ needs.package.outputs.filename }}
+        run: |
+          PACKAGE_PATH="${RUNNER_TEMP}/datum-package/${PACKAGE_FILENAME}"
+          ACTUAL_SHA512=$(shasum -a 512 "${PACKAGE_PATH}" | awk '{print $1}')
+          if [ "${ACTUAL_SHA512}" != "${EXPECTED_SHA512}" ]; then
+            echo "Downloaded package digest does not match the validated artifact." >&2
+            exit 1
+          fi
+          echo "${ACTUAL_SHA512}  ${PACKAGE_FILENAME}"
+
+      - name: Check Published Version
+        id: published
+        env:
+          PACKAGE_NAME: ${{ needs.package.outputs.package_name }}
+          PACKAGE_VERSION: ${{ needs.package.outputs.package_version }}
+        run: |
+          VIEW_JSON="${RUNNER_TEMP}/npm-view.json"
+          VIEW_ERROR="${RUNNER_TEMP}/npm-view.stderr"
+          set +e
+          npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version --json > "${VIEW_JSON}" 2> "${VIEW_ERROR}"
+          VIEW_STATUS=$?
+          set -e
+          if [ "${VIEW_STATUS}" -eq 0 ]; then
             echo "published=true" >> "${GITHUB_OUTPUT}"
             echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is already published; skipping npm publish."
-          else
+          elif node -e 'const fs = require("node:fs"); let value; try { value = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch {} process.exit(value?.error?.code === "E404" ? 0 : 1)' "${VIEW_JSON}"; then
             echo "published=false" >> "${GITHUB_OUTPUT}"
+          else
+            cat "${VIEW_JSON}" >&2
+            cat "${VIEW_ERROR}" >&2
+            exit "${VIEW_STATUS}"
           fi
-
-      - name: Build Package
-        if: steps.published.outputs.published != 'true'
-        run: npm run build
 
       - name: Publish
         if: steps.published.outputs.published != 'true'
-        run: npm publish --access public --provenance
+        run: npm publish "${RUNNER_TEMP}/datum-package/${{ needs.package.outputs.filename }}" --access public --provenance --ignore-scripts

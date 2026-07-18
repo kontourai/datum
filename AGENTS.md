@@ -32,9 +32,22 @@ and `datum test-connection` (validates auth + reachability for one provider)
 
 ## Useful Commands
 
-- `npm run verify` (check:decisions + typecheck + build + tests + check:pack —
-  the chain CI runs)
+- `npm run verify` (check:decisions + typecheck + build + tests + exact package
+  and clean-consumer checks — the authoritative local gate while CI is paused)
 - `npm test` · `npm run typecheck` · `npm run build`
 - `npm run freeze:adrs` (re-run after adding a `docs/adr/` file — prepends the
   frozen banner and regenerates `docs/adr/index.md`) · `npm run check:decisions` ·
   `npm run gen:decisions-index`
+
+## Release Discipline
+
+- `prepublishOnly` must run the complete local verification gate.
+- CI, Release Please, and npm publication remain manual-only while hosted CI is
+  out of budget. Do not treat an installed or enabled workflow as executed
+  evidence.
+- Publication validates one exact tarball, records its hash, and publishes that
+  same artifact with lifecycle scripts disabled.
+- Artifact construction and verification run without OIDC. OIDC belongs only
+  to the `npm-publish` environment job after tag/version/main preflight
+  succeeds; that job downloads and verifies the validated artifact, checks the
+  registry, and publishes without checking out or executing repository code.
