@@ -245,16 +245,18 @@ API, and runs `datum --help`. `prepublishOnly` enforces the same gate for local
 publication.
 
 The publish workflow first verifies the `vX.Y.Z` ref, package version, and main
-ancestry in a read-only job with no OIDC. Only after that and the Node 22/24
-verification matrix pass does the `npm-publish` environment grant OIDC. Registry
-errors fail closed except for explicit not-found, and the workflow hashes and
-publishes the same validated tarball with lifecycle scripts disabled.
+ancestry in a read-only job. After the Node 22/24 matrix passes, a no-OIDC job
+builds, validates, hashes, and uploads the exact tarball. The protected publish
+job does not check out or execute repository code: it downloads and verifies
+that artifact, fails closed on registry errors except for a structured npm
+`E404`, and publishes it with provenance and lifecycle scripts disabled.
 
-Owner activation on npmjs.com: configure a
-**trusted publisher** for `@kontourai/datum` (repo `kontourai/datum`, workflow
-`.github/workflows/publish-npm.yml`) so future OIDC publishes need no token, and
-enable provenance display. Automatic triggers should be restored only with
-explicit hosted-budget approval; this is tracked in issue #17.
+Owner activation on npmjs.com: configure a **trusted publisher** for
+`@kontourai/datum` with organization `kontourai`, repository `datum`, workflow
+filename `publish-npm.yml`, environment `npm-publish`, and only the `npm
+publish` allowed action. Enable provenance display. Automatic triggers should
+be restored only with explicit hosted-budget approval; this is tracked in
+issue #17.
 
 ## License
 

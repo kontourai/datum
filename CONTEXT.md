@@ -60,11 +60,12 @@ one provider) — all three are explicit, opt-in commands.
 - **Release Automation**: Datum's authority-separated package pipeline. Local
   verification builds one exact-allowlisted tarball and proves its root import
   and CLI in a clean consumer. A read-only workflow preflight proves the tag,
-  package version, and main ancestry before the environment-protected publish
-  job receives OIDC; that job fails closed on registry errors and publishes the
-  exact validated tarball with provenance and lifecycle scripts disabled. CI,
-  Release Please, and publication are manual-only while hosted CI is out of
-  budget.
+  package version, and main ancestry. A separate no-OIDC job builds, validates,
+  hashes, and transfers the exact artifact. Only then does the
+  environment-protected publish job receive OIDC; it checks the transferred
+  digest, fails closed on registry errors, and publishes without checking out
+  or executing repository code. CI, Release Please, and publication are
+  manual-only while hosted CI is out of budget.
 - **HTTPS Enforcement**: the policy `datum doctor --probe`, `datum
   discover`, and `datum test-connection` apply to every outbound request
   before it is sent. `https://` is always allowed; loopback `http://`

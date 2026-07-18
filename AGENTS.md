@@ -47,5 +47,7 @@ and `datum test-connection` (validates auth + reachability for one provider)
   evidence.
 - Publication validates one exact tarball, records its hash, and publishes that
   same artifact with lifecycle scripts disabled.
-- OIDC belongs only to the `npm-publish` environment job after tag/version/main
-  preflight succeeds without publication authority.
+- Artifact construction and verification run without OIDC. OIDC belongs only
+  to the `npm-publish` environment job after tag/version/main preflight
+  succeeds; that job downloads and verifies the validated artifact, checks the
+  registry, and publishes without checking out or executing repository code.
