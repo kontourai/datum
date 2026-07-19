@@ -3,7 +3,10 @@ import {
   MAX_RANK_V2_ADVISORIES,
   MAX_RANK_V2_ADVISORY_CELLS,
   rankCatalog,
+  validateExecutionProfile,
+  validateModelIdentity,
   validateRankRequest,
+  type ExecutionProfile,
   type ExcludedCandidateV2,
   type RankAdvisoryProjection,
   type RankAdvisoryRequest,
@@ -23,6 +26,7 @@ import { isLoopbackHost } from "./security.js";
 import type {
   AuthStatus,
   CapabilityRoleExclusion,
+  CapabilityExecutionProfile,
   CapabilityRoleReason,
   CapabilityRoleRequest,
   CapabilityRoleResolveOptions,
@@ -42,16 +46,88 @@ const MAX_TOOL_SURFACE = 128;
 const MODEL_REF_RE = /^[^@\s]+(@[^@\s]+)?$/;
 const EXPLICIT_MODEL_REF_RE = /^[^@\s]+@[^@\s]+$/;
 const fixedUncertainty = (): Uncertainty => ({ level: "unknown", basis: ["Datum fixed resolution bypasses Bearing ranking."], gaps: [] });
+const incompleteUncertainty = (candidate: CapabilityRuntimeCandidate): Uncertainty => ({
+  level: "unknown",
+  basis: ["Datum excluded this launchable candidate before Bearing ranking because its execution profile is incomplete."],
+  gaps: [
+    ...(candidate.execution.runtime === null ? ["runtime is unknown"] : []),
+    ...(candidate.execution.toolSurface === null ? ["tool surface is unknown"] : []),
+  ],
+});
+
+type RankableCapabilityRuntimeCandidate = Omit<CapabilityRuntimeCandidate, "execution"> & {
+  execution: ExecutionProfile;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function invalid(message: string): never { throw new DatumError("INVALID_CONFIG", message); }
 function bounded(value: unknown, label: string): asserts value is string {
-  if (typeof value !== "string" || value.length === 0 || value.length > MAX_STRING || /[\u0000-\u001f]/.test(value)) invalid(`${label} must be a bounded non-control string.`);
+  if (typeof value !== "string" || value.length === 0 || value.trim() !== value || value.length > MAX_STRING || /[\u0000-\u001f]/.test(value)) invalid(`${label} must be a bounded, trimmed non-control string.`);
 }
 function boundedNullable(value: string | null, label: string): void {
   if (value !== null) bounded(value, label);
+}
+function exactRecord(value: unknown, label: string, keys: string[]): Record<string, unknown> {
+  if (!isRecord(value)) invalid(`${label} must be an object.`);
+  for (const key of Object.keys(value)) {
+    if (!keys.includes(key)) invalid(`${label} has unknown key "${key}".`);
+  }
+  for (const key of keys) {
+    if (!Object.hasOwn(value, key)) invalid(`${label} must contain "${key}".`);
+  }
+  return value;
+}
+function nonnegativeIntegerOrNull(value: unknown, label: string): void {
+  if (value !== null && (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)) {
+    invalid(`${label} must be a non-negative safe integer or null.`);
+  }
+}
+function component(value: unknown, label: string): void {
+  const item = exactRecord(value, label, ["id", "version"]);
+  bounded(item.id, `${label}.id`);
+  if (item.version !== null) bounded(item.version, `${label}.version`);
+}
+function hardware(value: unknown, label: string): void {
+  if (value === null) return;
+  const item = exactRecord(value, label, ["class", "accelerator", "memoryBytes"]);
+  bounded(item.class, `${label}.class`);
+  if (item.accelerator !== null) bounded(item.accelerator, `${label}.accelerator`);
+  nonnegativeIntegerOrNull(item.memoryBytes, `${label}.memoryBytes`);
+}
+function workflow(value: unknown, label: string): void {
+  if (value === null) return;
+  const item = exactRecord(value, label, ["id", "version", "condition"]);
+  bounded(item.id, `${label}.id`);
+  if (item.version !== null) bounded(item.version, `${label}.version`);
+  if (item.condition !== null) bounded(item.condition, `${label}.condition`);
+}
+function validateCandidateExecution(value: unknown, label: string): asserts value is CapabilityExecutionProfile {
+  const item = exactRecord(value, label, [
+    "runtime",
+    "adapter",
+    "effectiveContextTokens",
+    "toolSurface",
+    "hardware",
+    "workflow",
+  ]);
+  if (item.runtime !== null) component(item.runtime, `${label}.runtime`);
+  if (item.adapter !== null) component(item.adapter, `${label}.adapter`);
+  nonnegativeIntegerOrNull(item.effectiveContextTokens, `${label}.effectiveContextTokens`);
+  if (item.toolSurface !== null) {
+    if (!Array.isArray(item.toolSurface) || item.toolSurface.length > MAX_TOOL_SURFACE) {
+      invalid(`${label}.toolSurface must be null or contain at most ${MAX_TOOL_SURFACE} entries.`);
+    }
+    const tools = item.toolSurface as unknown[];
+    tools.forEach((tool, index) => bounded(tool, `${label}.toolSurface[${index}]`));
+    if (new Set(tools).size !== tools.length) invalid(`${label}.toolSurface must not contain duplicates.`);
+  }
+  hardware(item.hardware, `${label}.hardware`);
+  workflow(item.workflow, `${label}.workflow`);
+}
+function isRankableCandidate(candidate: CapabilityRuntimeCandidate): candidate is RankableCapabilityRuntimeCandidate {
+  return candidate.execution.runtime !== null && candidate.execution.toolSurface !== null;
 }
 function combinedAdvisories(
   durable: RankAdvisoryRequest[],
@@ -117,7 +193,27 @@ function validateCandidateEnvelope(candidate: unknown, index: number, ids: Set<s
   if (ids.has(candidate.id)) invalid(`capability role request.inventory has duplicate candidate id "${candidate.id}".`);
   ids.add(candidate.id);
   if (candidate.locality !== "local" && candidate.locality !== "remote" && candidate.locality !== "unknown") invalid(`capability role request.inventory[${index}].locality is invalid.`);
-  if (!isRecord(candidate.model)) invalid(`capability role request.inventory[${index}].model must be a Bearing model identity.`);
+  const modelLabel = `capability role request.inventory[${index}].model`;
+  try {
+    validateModelIdentity(candidate.model, modelLabel);
+  } catch (error) {
+    const detail = error instanceof Error ? ` ${error.message}` : "";
+    invalid(`${modelLabel} must be a Bearing model identity.${detail}`);
+  }
+  const model = candidate.model as CapabilityRuntimeCandidate["model"];
+  bounded(model.id, `${modelLabel}.id`);
+  boundedNullable(model.revision, `${modelLabel}.revision`);
+  boundedNullable(model.quantization, `${modelLabel}.quantization`);
+  const executionLabel = `capability role request.inventory[${index}].execution`;
+  validateCandidateExecution(candidate.execution, executionLabel);
+  const typedCandidate = candidate as unknown as CapabilityRuntimeCandidate;
+  if (!isRankableCandidate(typedCandidate)) return;
+  try {
+    validateExecutionProfile(typedCandidate.execution, executionLabel);
+  } catch (error) {
+    const detail = error instanceof Error ? ` ${error.message}` : "";
+    invalid(`${executionLabel} must be a concrete Bearing execution profile.${detail}`);
+  }
 }
 
 function validateCriteria(request: CapabilityRoleRequest): void {
@@ -141,7 +237,9 @@ function validateBearingRequest(request: CapabilityRoleRequest): RankRequestV2 {
     return validateRankRequest({
       schemaVersion: "bearing.rank.request/v2",
       task: request.task,
-      inventory: request.inventory.map(({ id, model, execution }) => ({ id, model, execution })),
+      inventory: request.inventory
+        .filter(isRankableCandidate)
+        .map(({ id, model, execution }) => ({ id, model, execution })),
       requirements: request.requirements ?? [],
       preferences: request.preferences ?? [],
       advisories: request.advisories ?? [],
@@ -273,7 +371,9 @@ function buildRankRequest(policy: PolicyCapabilityRole, request: CapabilityRoleR
     return validateRankRequest({
       schemaVersion: "bearing.rank.request/v2",
       task: request.task,
-      inventory: request.inventory.map(({ id, model, execution }) => ({ id, model, execution })),
+      inventory: request.inventory
+        .filter(isRankableCandidate)
+        .map(({ id, model, execution }) => ({ id, model, execution })),
       requirements: [...policy.policy.requirements, ...(request.requirements ?? [])],
       preferences: [...policy.policy.preferences, ...(request.preferences ?? [])],
       advisories,
@@ -343,7 +443,23 @@ function catalogFailureResult(error: unknown, request: CapabilityRoleRequest, co
 function rankedResult(request: CapabilityRoleRequest, context: ResolutionContext, loaded: ReturnType<typeof loadCatalog>, rankRequest: RankRequestV2): CapabilityRoleResult {
   const rank = rankCatalog(loaded.catalog, rankRequest);
   const byId = new Map(request.inventory.map((candidate) => [candidate.id, candidate]));
-  const exclusions = rank.excluded.map((entry: ExcludedCandidateV2) => exclusion(byId.get(entry.candidateId)!, [], entry.reasons, entry.evidence, entry.uncertainty, entry.advisories));
+  const exclusions: CapabilityRoleExclusion[] = request.inventory
+    .filter((candidate) => !isRankableCandidate(candidate))
+    .map((candidate) => exclusion(
+      candidate,
+      ["DATUM_EXECUTION_PROFILE_INCOMPLETE"],
+      [],
+      [],
+      incompleteUncertainty(candidate),
+    ));
+  exclusions.push(...rank.excluded.map((entry: ExcludedCandidateV2) => exclusion(
+    byId.get(entry.candidateId)!,
+    [],
+    entry.reasons,
+    entry.evidence,
+    entry.uncertainty,
+    entry.advisories,
+  )));
   const eligible: CapabilityRoleTarget[] = [];
   for (const entry of rank.ranked as RankedCandidateV2[]) {
     const candidate = byId.get(entry.candidateId)!;
@@ -354,6 +470,7 @@ function rankedResult(request: CapabilityRoleRequest, context: ResolutionContext
     }
     eligible.push(binding(candidate, checked.provider, checked.auth, context.env, entry.rank, entry.score, entry.reasons, entry.evidence, entry.uncertainty, entry.advisories, { posture: "durable", reason: "DATUM_POLICY_RANKED" }));
   }
+  exclusions.sort((a, b) => a.candidate.id.localeCompare(b.candidate.id));
   const [target, ...alternatives] = eligible;
   const fallback = context.policy?.policy.fallback;
   return {

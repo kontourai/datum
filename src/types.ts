@@ -76,6 +76,13 @@ export interface PolicyCapabilityRole {
 }
 
 /** A caller-owned launchable candidate. Datum never adds candidates to this list. */
+export interface CapabilityExecutionProfile extends Omit<ExecutionProfile, "runtime" | "toolSurface"> {
+  /** null means the caller cannot truthfully identify the launch runtime. */
+  runtime: ExecutionProfile["runtime"] | null;
+  /** null is unknown; an empty array is known-empty. */
+  toolSurface: ExecutionProfile["toolSurface"] | null;
+}
+
 export interface CapabilityRuntimeCandidate {
   /** Opaque, request-scoped id. */
   id: string;
@@ -85,7 +92,7 @@ export interface CapabilityRuntimeCandidate {
   providerModel: string;
   locality: "local" | "remote" | "unknown";
   model: ModelIdentity;
-  execution: ExecutionProfile;
+  execution: CapabilityExecutionProfile;
 }
 
 export interface CapabilityRoleRequest {
@@ -101,6 +108,7 @@ export interface CapabilityRoleRequest {
 }
 
 export type CapabilityRoleReason =
+  | "DATUM_EXECUTION_PROFILE_INCOMPLETE"
   | "DATUM_LOCALITY_DISALLOWED"
   | "DATUM_PROVIDER_MISSING"
   | "DATUM_PROVIDER_MODEL_UNCONFIGURED"

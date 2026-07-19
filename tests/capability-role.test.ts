@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { compileCatalog, serializeCatalog, type ExecutionProfile, type ObservationInput } from "@kontourai/bearing";
-import { refreshCapabilityCatalog, resolveCapabilityRole, validateConfig, type CapabilityRole, type CapabilityRoleRequest, type CapabilityRoleResolveOptions } from "../src/index.js";
+import { refreshCapabilityCatalog, resolveCapabilityRole, validateConfig, type CapabilityRole, type CapabilityRoleRequest, type CapabilityRoleResolveOptions, type CapabilityRuntimeCandidate } from "../src/index.js";
 import { fakeRunner, tempTree } from "./helpers.js";
 
 const execution: ExecutionProfile = {
@@ -15,7 +15,7 @@ const execution: ExecutionProfile = {
   workflow: null,
 };
 
-function candidate(id: string, providerId: string, providerModel: string, locality: "local" | "remote" | "unknown", canonicalModel = providerModel) {
+function candidate(id: string, providerId: string, providerModel: string, locality: "local" | "remote" | "unknown", canonicalModel = providerModel): CapabilityRuntimeCandidate {
   return {
     id,
     providerId,
@@ -24,6 +24,43 @@ function candidate(id: string, providerId: string, providerModel: string, locali
     model: { id: canonicalModel, revision: null, quantization: null },
     execution,
   };
+}
+
+interface StationModelFixture {
+  schemaVersion: "station.model-inventory/v2";
+  models: Array<{
+    id: string;
+    providerId: string;
+    providerModel: string;
+    locality: "local" | "remote" | "unknown";
+    model: CapabilityRuntimeCandidate["model"];
+    runtime: CapabilityRuntimeCandidate["execution"]["runtime"];
+    adapter: CapabilityRuntimeCandidate["execution"]["adapter"];
+    effectiveContextTokens: number | null;
+    toolSurface: string[] | null;
+  }>;
+}
+
+function stationFixtureCandidates(): CapabilityRuntimeCandidate[] {
+  const fixture = JSON.parse(
+    readFileSync(path.join(process.cwd(), "tests/fixtures/station-model-inventory-v2.json"), "utf8"),
+  ) as StationModelFixture;
+  assert.equal(fixture.schemaVersion, "station.model-inventory/v2");
+  return fixture.models.map((model) => ({
+    id: model.id,
+    providerId: model.providerId,
+    providerModel: model.providerModel,
+    locality: model.locality,
+    model: model.model,
+    execution: {
+      runtime: model.runtime,
+      adapter: model.adapter,
+      effectiveContextTokens: model.effectiveContextTokens,
+      toolSurface: model.toolSurface,
+      hardware: null,
+      workflow: null,
+    },
+  }));
 }
 
 function catalog() {
@@ -102,6 +139,94 @@ test("resolveCapabilityRole: remote-allowed policy can select the top remote can
   assert.equal(result.alternatives[0]?.id, "local");
   assert.equal(result.target?.rank, 1);
   assert.ok(result.target?.reasons.some((reason) => reason.summary.length > 0));
+});
+
+test("resolveCapabilityRole: preserves Station-shaped unknown execution without lossy coercion", () => {
+  const inventory = stationFixtureCandidates();
+  const result = resolveCapabilityRole("chat", request({
+    task: { family: "chat", suite: null },
+    inventory,
+  }), options({ policy: {
+    requirements: [],
+    preferences: [{ measurementKey: "quality", aggregation: "fact", direction: "maximize", weight: 1 }],
+    locality: "remote-allowed",
+  } }));
+
+  assert.equal(result.target?.id, "local");
+  assert.deepEqual(result.target?.execution.toolSurface, []);
+  const unknown = result.exclusions.find((entry) => entry.candidate.id === "remote");
+  assert.ok(unknown);
+  assert.equal(unknown.candidate.execution.runtime, null);
+  assert.equal(unknown.candidate.execution.toolSurface, null);
+  assert.deepEqual(unknown.datumReasons, ["DATUM_EXECUTION_PROFILE_INCOMPLETE"]);
+  assert.deepEqual(unknown.uncertainty.gaps, ["runtime is unknown", "tool surface is unknown"]);
+});
+
+test("resolveCapabilityRole: fixed overrides can select launchable candidates with incomplete execution", () => {
+  const [unknown] = stationFixtureCandidates();
+  const result = resolveCapabilityRole("chat", request({
+    task: { family: "chat", suite: null },
+    inventory: [unknown],
+    fixedOverride: "remote@cloud",
+  }), options({ policy: { requirements: [], preferences: [], locality: "remote-allowed" } }));
+
+  assert.equal(result.posture, "override");
+  assert.equal(result.target?.id, "remote");
+  assert.equal(result.target?.execution.runtime, null);
+  assert.equal(result.target?.execution.toolSurface, null);
+  assert.equal(result.target?.selection.reason, "DATUM_FIXED_SESSION_OVERRIDE");
+});
+
+test("resolveCapabilityRole: emergency fallback can select incomplete execution without invention", () => {
+  const [unknown] = stationFixtureCandidates();
+  const configured = options({ policy: {
+    requirements: [],
+    preferences: [],
+    locality: "remote-allowed",
+    fallback: "remote@cloud",
+  } });
+  configured.catalog = undefined;
+
+  const result = resolveCapabilityRole("chat", request({
+    task: { family: "chat", suite: null },
+    inventory: [unknown],
+  }), configured);
+
+  assert.equal(result.posture, "fallback");
+  assert.equal(result.target?.id, "remote");
+  assert.equal(result.target?.execution.runtime, null);
+  assert.equal(result.fallback.used, true);
+  assert.equal(result.diagnostics[0]?.code, "CAPABILITY_CATALOG_UNAVAILABLE");
+});
+
+test("resolveCapabilityRole: all-incomplete policy inventory remains explicit and Bearing-validates criteria", () => {
+  const [unknown] = stationFixtureCandidates();
+  const role = { policy: { requirements: [], preferences: [], locality: "remote-allowed" as const } };
+  const result = resolveCapabilityRole("chat", request({
+    task: { family: "chat", suite: null },
+    inventory: [unknown],
+  }), options(role));
+
+  assert.equal(result.posture, "unavailable");
+  assert.equal(result.target, null);
+  assert.equal(result.catalog?.digest, catalog().digest);
+  assert.deepEqual(result.exclusions.map((entry) => entry.datumReasons), [["DATUM_EXECUTION_PROFILE_INCOMPLETE"]]);
+  assert.equal(result.diagnostics[0]?.code, "DATUM_NO_ELIGIBLE_TARGET");
+
+  assert.throws(
+    () => resolveCapabilityRole("chat", request({
+      task: { family: "chat", suite: null },
+      inventory: [unknown],
+      requirements: [{
+        measurementKey: "quality",
+        aggregation: "fact",
+        operator: "gte",
+        value: "not-numeric",
+      }],
+    }), options(role)),
+    (error: unknown) => (error as { code?: string; message?: string }).code === "INVALID_CONFIG"
+      && (error as { message: string }).message.includes("must be numeric"),
+  );
 });
 
 test("resolveCapabilityRole: partial runtime evidence applies only to matching inventory candidates", () => {
