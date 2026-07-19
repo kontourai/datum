@@ -33,3 +33,8 @@ or infer advisory identity or meaning from model names. Fixed, override, and
 fallback paths carry empty advisory lists because they bypass Bearing. The
 composed durable and request advisory set retains Bearing's unique-id, count,
 UTF-8 text, and candidate-projection-cell limits.
+
+Bearing rank v2 reasons also retain execution applicability. A declaration with
+a partial execution scope can contribute only to inventory candidates matching
+its asserted dimensions; Datum passes the matched, wildcarded, and mismatched
+dimensions through without adding source-specific interpretation.

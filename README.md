@@ -112,7 +112,8 @@ measurement keys, or recommendation meaning from model names or catalog
 internals. Fixed, override, and fallback resolution return no advisories because
 they bypass Bearing. The combined durable and request set must use unique ids,
 contain at most 64 advisories, and produce at most 1,024 inventory projection
-cells.
+cells. Rank reasons retain Bearing's execution applicability, so partial facts
+apply only to candidates matching the dimensions their source actually asserts.
 
 ### Capability catalog snapshots
 

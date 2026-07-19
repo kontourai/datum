@@ -28,11 +28,11 @@ function candidate(id: string, providerId: string, providerModel: string, locali
 
 function catalog() {
   const observations: ObservationInput[] = ["remote", "local"].map((id) => ({
-    schemaVersion: "bearing.observation/v1",
+    schemaVersion: "bearing.observation/v2",
     kind: "declaration",
     model: { id, revision: null, quantization: null },
-    execution,
-    task: { family: "chat", suite: null, taskId: null, evaluator: { id: "fixture", version: "1" } },
+    execution: { kind: "exact", ...execution },
+    task: null,
     measurements: [
       { key: "quality", kind: "fact", value: id === "remote" ? 10 : 5 },
       { key: "context.projection", kind: "fact", value: id === "remote" ? "full" : "focused" },
@@ -86,6 +86,59 @@ test("resolveCapabilityRole: remote-allowed policy can select the top remote can
   assert.equal(result.alternatives[0]?.id, "local");
   assert.equal(result.target?.rank, 1);
   assert.ok(result.target?.reasons.some((reason) => reason.summary.length > 0));
+});
+
+test("resolveCapabilityRole: partial runtime evidence applies only to matching inventory candidates", () => {
+  const sharedModel = "example/shared-model";
+  const partial: ObservationInput = {
+    schemaVersion: "bearing.observation/v2",
+    kind: "declaration",
+    model: { id: sharedModel, revision: null, quantization: null },
+    execution: {
+      kind: "partial",
+      runtime: { id: "openrouter", version: null },
+      adapter: null,
+      effectiveContextTokens: null,
+      toolSurface: null,
+      hardware: null,
+      workflow: null,
+    },
+    task: null,
+    measurements: [{ key: "model.context.max_tokens", kind: "fact", value: 1_050_000 }],
+    outcome: null,
+    usage: null,
+    sourceClass: "external",
+    evidence: [{ id: "runtime-scoped-context", kind: "source", uri: null, digest: null, observedAt: "2026-07-18T00:00:00.000Z" }],
+    freshness: { observedAt: "2026-07-18T00:00:00.000Z", validUntil: null },
+    uncertainty: { level: "moderate", basis: ["provider declaration"], gaps: [] },
+  };
+  const snapshot = compileCatalog([partial], { asOf: "2026-07-18T00:00:00.000Z" });
+  const policy: CapabilityRole = { policy: {
+    requirements: [{ measurementKey: "model.context.max_tokens", aggregation: "fact", operator: "gte", value: 1_000_000 }],
+    preferences: [],
+    locality: "remote-allowed",
+  } };
+  const openrouter = {
+    ...candidate("remote", "cloud", "remote", "remote", sharedModel),
+    execution: { ...execution, runtime: { id: "openrouter", version: "2026-07-18" } },
+  };
+  const local = candidate("local", "local", "local", "local", sharedModel);
+  const configured = options(policy);
+  configured.catalog = {
+    catalog: snapshot,
+    metadata: { source: { kind: "local", location: "<local>", key: "f".repeat(64) }, digest: snapshot.digest, asOf: snapshot.asOf, ageSeconds: 0, fallback: false, notModified: false, diagnostics: [], warnings: [] },
+  };
+
+  const result = resolveCapabilityRole("chat", request({
+    task: { family: "chat", suite: null },
+    inventory: [local, openrouter],
+  }), configured);
+
+  assert.equal(result.target?.id, "remote");
+  assert.deepEqual(result.target?.reasons[0].executionApplicability.matchedKinds, ["partial"]);
+  const excluded = result.exclusions.find((entry) => entry.candidate.id === "local");
+  assert.equal(excluded?.reasons[0].code, "INCOMPARABLE_EVIDENCE");
+  assert.deepEqual(excluded?.reasons[0].executionApplicability.mismatchedDimensions, ["runtime.id"]);
 });
 
 test("resolveCapabilityRole: passes generic Bearing advisories through without interpreting them", () => {

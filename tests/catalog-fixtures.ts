@@ -15,7 +15,7 @@ export function catalog(asOf = "2026-07-18T00:00:00.000Z") {
 
 export function catalogVariant(asOf: string, modelId: string) {
   const observation: ObservationInput = {
-    schemaVersion: "bearing.observation/v1",
+    schemaVersion: "bearing.observation/v2",
     kind: "declaration",
     model: { id: modelId, revision: null, quantization: null },
     execution: null,

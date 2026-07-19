@@ -6,7 +6,7 @@
  * library hands back. Nothing here imports an AI SDK or makes a network call.
  */
 
-import type { ExecutionProfile, ModelIdentity, RankAdvisoryProjection, RankAdvisoryRequest, RankEvidence, RankPreference, RankReason, RankRequirement, RankTask, Uncertainty } from "@kontourai/bearing";
+import type { ExecutionProfile, ModelIdentity, RankAdvisoryProjection, RankAdvisoryRequest, RankEvidence, RankPreference, RankReasonV2, RankRequirement, RankTask, Uncertainty } from "@kontourai/bearing";
 import type { CapabilityCatalogMetadata, CapabilityCatalogResult } from "./catalog/types.js";
 import type { SecretRunner } from "./secrets.js";
 
@@ -124,7 +124,7 @@ export interface CapabilityRoleTarget extends CapabilityRuntimeCandidate {
   rank: number | null;
   score: number | null;
   /** Full Bearing rank explanations; empty when Bearing ranking was bypassed. */
-  reasons: RankReason[];
+  reasons: RankReasonV2[];
   evidence: RankEvidence[];
   advisories: RankAdvisoryProjection[];
   uncertainty: Uncertainty;
@@ -135,7 +135,7 @@ export interface CapabilityRoleTarget extends CapabilityRuntimeCandidate {
 export interface CapabilityRoleExclusion {
   candidate: CapabilityRuntimeCandidate;
   /** Full Bearing exclusion explanations, including actual/expected/contribution. */
-  reasons: RankReason[];
+  reasons: RankReasonV2[];
   /** Datum-owned post-ranking eligibility failures. */
   datumReasons: CapabilityRoleReason[];
   evidence: RankEvidence[];
