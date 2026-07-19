@@ -137,6 +137,12 @@
               "properties": {
                 "requirements": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/RankRequirement" } },
                 "preferences": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/RankPreference" } },
+                "advisories": {
+                  "type": "array",
+                  "maxItems": 64,
+                  "$comment": "Runtime validation requires advisory ids to be unique and enforces Bearing's combined durable plus request count and projection-cell limits.",
+                  "items": { "$ref": "#/$defs/RankAdvisory" }
+                },
                 "locality": { "enum": ["local-only", "remote-allowed"] },
                 "fallback": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^@\\s]+(@[^@\\s]+)?$" }
               }
@@ -160,7 +166,14 @@
         "measurementKey": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^(?=\\S)(?!.*[\\u0000-\\u001f]).*\\S$" },
         "aggregation": { "enum": ["fact", "mean", "min", "max", "success-rate", "count"] },
         "operator": { "enum": ["eq", "gte", "lte"] },
-        "value": { "type": ["string", "number", "boolean"] },
+        "value": {
+          "$comment": "Runtime validation additionally enforces Bearing's 256 UTF-8 byte limit for string values.",
+          "oneOf": [
+            { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^(?=\\S)(?!.*[\\u0000-\\u001f]).*\\S$" },
+            { "type": "number" },
+            { "type": "boolean" }
+          ]
+        },
         "sourceClasses": { "$ref": "#/$defs/SourceClasses" }
       },
       "allOf": [
@@ -179,6 +192,18 @@
         "aggregation": { "enum": ["fact", "mean", "min", "max", "success-rate", "count"] },
         "direction": { "enum": ["maximize", "minimize"] },
         "weight": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000000 },
+        "sourceClasses": { "$ref": "#/$defs/SourceClasses" }
+      }
+    },
+    "RankAdvisory": {
+      "type": "object",
+      "additionalProperties": false,
+      "$comment": "Runtime validation enforces Bearing's 256 UTF-8 byte limit on id and measurementKey; JSON Schema maxLength counts Unicode code points.",
+      "required": ["id", "measurementKey", "aggregation"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^(?=\\S)(?!.*[\\u0000-\\u001f]).*\\S$" },
+        "measurementKey": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^(?=\\S)(?!.*[\\u0000-\\u001f]).*\\S$" },
+        "aggregation": { "enum": ["fact", "mean", "min", "max", "success-rate", "count"] },
         "sourceClasses": { "$ref": "#/$defs/SourceClasses" }
       }
     }

@@ -15,6 +15,7 @@
 
 import { DatumError } from "./errors.js";
 import path from "node:path";
+import { MAX_RANK_V2_TEXT_BYTES } from "@kontourai/bearing";
 import type { CapabilityCatalogConfig, CapabilityRole, DatumConfig, ProviderConfig } from "./types.js";
 
 /** Env var NAME shape: uppercase identifier. Real secrets do not look like this. */
@@ -238,8 +239,14 @@ function validateCapabilityCatalog(value: unknown): CapabilityCatalogConfig {
 }
 
 function boundedString(value: unknown, label: string): asserts value is string {
-  if (typeof value !== "string" || value.length === 0 || value.length > MAX_ROLE_STRING || value.trim() !== value || /[\u0000-\u001f]/.test(value)) {
-    invalid(`${label} must be a non-empty trimmed string no longer than ${MAX_ROLE_STRING} characters.`);
+  if (
+    typeof value !== "string"
+    || value.length === 0
+    || new TextEncoder().encode(value).byteLength > MAX_RANK_V2_TEXT_BYTES
+    || value.trim() !== value
+    || /[\u0000-\u001f]/.test(value)
+  ) {
+    invalid(`${label} must be a non-empty trimmed string no longer than ${MAX_RANK_V2_TEXT_BYTES} UTF-8 bytes.`);
   }
 }
 
@@ -271,6 +278,7 @@ function validatePolicyRules(value: unknown, kind: "requirements" | "preferences
       if (!(typeof rule.value === "string" || typeof rule.value === "number" || typeof rule.value === "boolean") || (typeof rule.value === "number" && !Number.isFinite(rule.value))) {
         invalid(`role policy.requirements[${index}].value must be a finite scalar.`);
       }
+      if (typeof rule.value === "string") boundedString(rule.value, `role policy.requirements[${index}].value`);
       if ((rule.operator === "gte" || rule.operator === "lte") && typeof rule.value !== "number") {
         invalid(`role policy.requirements[${index}].value must be numeric for ${rule.operator}.`);
       }
@@ -283,19 +291,42 @@ function validatePolicyRules(value: unknown, kind: "requirements" | "preferences
   }
 }
 
+function validatePolicyAdvisories(value: unknown): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value) || value.length > MAX_ROLE_RULES) {
+    invalid(`role policy.advisories must be an array containing at most ${MAX_ROLE_RULES} entries.`);
+  }
+  const ids = new Set<string>();
+  for (const [index, item] of value.entries()) {
+    if (!isRecord(item)) invalid(`role policy.advisories[${index}] must be an object.`);
+    const advisory = item as Record<string, unknown>;
+    const allowed = new Set(["id", "measurementKey", "aggregation", "sourceClasses"]);
+    for (const key of Object.keys(advisory)) if (!allowed.has(key)) invalid(`role policy.advisories[${index}]: unknown key "${key}".`);
+    boundedString(advisory.id, `role policy.advisories[${index}].id`);
+    boundedString(advisory.measurementKey, `role policy.advisories[${index}].measurementKey`);
+    if (ids.has(advisory.id)) invalid(`role policy.advisories has duplicate id "${advisory.id}".`);
+    ids.add(advisory.id);
+    if (typeof advisory.aggregation !== "string" || !AGGREGATIONS.has(advisory.aggregation)) {
+      invalid(`role policy.advisories[${index}].aggregation is invalid.`);
+    }
+    validateSourceClasses(advisory.sourceClasses, `role policy.advisories[${index}].sourceClasses`);
+  }
+}
+
 function validateRole(name: string, value: unknown): asserts value is CapabilityRole {
   if (typeof value === "string") {
     if (!MODEL_REF_RE.test(value)) invalid(`role "${name}": target "${value}" must be "model" or "model@provider".`);
     return;
   }
   if (!isRecord(value) || Object.keys(value).length !== 1 || !isRecord(value.policy)) {
-    invalid(`role "${name}" must be a fixed model ref or { policy: { requirements, preferences, locality, fallback? } }.`);
+    invalid(`role "${name}" must be a fixed model ref or { policy: { requirements, preferences, advisories?, locality, fallback? } }.`);
   }
   const policy = value.policy as Record<string, unknown>;
-  const allowed = new Set(["requirements", "preferences", "locality", "fallback"]);
+  const allowed = new Set(["requirements", "preferences", "advisories", "locality", "fallback"]);
   for (const key of Object.keys(policy)) if (!allowed.has(key)) invalid(`role "${name}": policy unknown key "${key}".`);
   validatePolicyRules(policy.requirements, "requirements");
   validatePolicyRules(policy.preferences, "preferences");
+  validatePolicyAdvisories(policy.advisories);
   if (policy.locality !== "local-only" && policy.locality !== "remote-allowed") invalid(`role "${name}": policy.locality must be "local-only" or "remote-allowed".`);
   if (policy.fallback !== undefined && (typeof policy.fallback !== "string" || policy.fallback.length > MAX_ROLE_STRING || !MODEL_REF_RE.test(policy.fallback))) {
     invalid(`role "${name}": policy.fallback must be "model" or "model@provider".`);

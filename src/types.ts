@@ -6,7 +6,7 @@
  * library hands back. Nothing here imports an AI SDK or makes a network call.
  */
 
-import type { ExecutionProfile, ModelIdentity, RankEvidence, RankPreference, RankReason, RankRequirement, RankTask, Uncertainty } from "@kontourai/bearing";
+import type { ExecutionProfile, ModelIdentity, RankAdvisoryProjection, RankAdvisoryRequest, RankEvidence, RankPreference, RankReason, RankRequirement, RankTask, Uncertainty } from "@kontourai/bearing";
 import type { CapabilityCatalogMetadata, CapabilityCatalogResult } from "./catalog/types.js";
 import type { SecretRunner } from "./secrets.js";
 
@@ -67,6 +67,8 @@ export interface PolicyCapabilityRole {
   policy: {
     requirements: RankRequirement[];
     preferences: RankPreference[];
+    /** Generic evidence projections requested from Bearing; Datum does not interpret their ids or values. */
+    advisories?: RankAdvisoryRequest[];
     locality: "local-only" | "remote-allowed";
     /** Explicit emergency target; used only when the catalog is unavailable or stale. */
     fallback?: string;
@@ -92,6 +94,8 @@ export interface CapabilityRoleRequest {
   inventory: CapabilityRuntimeCandidate[];
   requirements?: RankRequirement[];
   preferences?: RankPreference[];
+  /** Additive request-scoped evidence projections. */
+  advisories?: RankAdvisoryRequest[];
   /** Highest-precedence, request-scoped fixed model ref. Never persisted. */
   fixedOverride?: string;
 }
@@ -122,6 +126,7 @@ export interface CapabilityRoleTarget extends CapabilityRuntimeCandidate {
   /** Full Bearing rank explanations; empty when Bearing ranking was bypassed. */
   reasons: RankReason[];
   evidence: RankEvidence[];
+  advisories: RankAdvisoryProjection[];
   uncertainty: Uncertainty;
   /** Datum-owned selection reason, distinct from Bearing rank explanations. */
   selection: { posture: "override" | "durable" | "fallback"; reason: CapabilityRoleReason };
@@ -135,6 +140,7 @@ export interface CapabilityRoleExclusion {
   datumReasons: CapabilityRoleReason[];
   evidence: RankEvidence[];
   uncertainty: Uncertainty;
+  advisories: RankAdvisoryProjection[];
 }
 
 export interface CapabilityRoleResult {
@@ -145,8 +151,9 @@ export interface CapabilityRoleResult {
   alternatives: CapabilityRoleTarget[];
   exclusions: CapabilityRoleExclusion[];
   catalog: { digest: string; asOf: string; metadata: CapabilityCatalogMetadata } | null;
-  /** Bearing-owned evidence for the selected candidate; no advisory projection is synthesized. */
+  /** Bearing-owned evidence and advisories for the selected candidate. */
   evidence: RankEvidence[];
+  advisories: RankAdvisoryProjection[];
   uncertainty: Uncertainty | null;
   override: { active: boolean; source: "session" | "env" | null; ref?: string };
   fallback: { configured: boolean; used: boolean; ref?: string };

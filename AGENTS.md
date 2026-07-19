@@ -14,7 +14,8 @@ explicit, opt-in commands.
 ## Source Of Truth
 
 - Config schema: `datum.schema.json` (normative). The runtime validator in
-  `src/validate.ts` mirrors it and adds the secret-literal rule.
+  `src/validate.ts` mirrors it and adds the secret-literal rule plus documented
+  cross-item and UTF-8 byte constraints that JSON Schema cannot express.
 - Frozen design decisions (precedence, secret-reference-only,
   generator-not-wrapper, slice roadmap): `docs/adr/` (numbered, immutable —
   see the banner on each file). Current/living decisions and their vocabulary

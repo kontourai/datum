@@ -24,6 +24,12 @@ explicit policy fallback under the same boundary; otherwise the API returns a
 typed no-target result with diagnostics. Ordinary resolution is offline.
 
 The result carries Bearing digest/as-of, Datum catalog metadata, ranking
-evidence/uncertainty, exclusions, and override/fallback state. Bearing rank v1
-does not provide advisory projection recommendations. Datum must not infer them
-from model names or observations; Bearing#22 owns that future generic feature.
+evidence/uncertainty, exclusions, and override/fallback state. Durable policy
+and request advisories are additive and use Bearing rank v2. Datum passes the
+exact per-candidate projection status, scalar value/unit, evidence, and
+uncertainty through to ranked targets and exclusions, with selected-target
+advisories mirrored at the result root. Datum does not inspect catalog internals
+or infer advisory identity or meaning from model names. Fixed, override, and
+fallback paths carry empty advisory lists because they bypass Bearing. The
+composed durable and request advisory set retains Bearing's unique-id, count,
+UTF-8 text, and candidate-projection-cell limits.

@@ -33,7 +33,10 @@ function catalog() {
     model: { id, revision: null, quantization: null },
     execution,
     task: { family: "chat", suite: null, taskId: null, evaluator: { id: "fixture", version: "1" } },
-    measurements: [{ key: "quality", kind: "fact", value: id === "remote" ? 10 : 5 }],
+    measurements: [
+      { key: "quality", kind: "fact", value: id === "remote" ? 10 : 5 },
+      { key: "context.projection", kind: "fact", value: id === "remote" ? "full" : "focused" },
+    ],
     outcome: null,
     usage: null,
     sourceClass: "first-party",
@@ -83,6 +86,80 @@ test("resolveCapabilityRole: remote-allowed policy can select the top remote can
   assert.equal(result.alternatives[0]?.id, "local");
   assert.equal(result.target?.rank, 1);
   assert.ok(result.target?.reasons.some((reason) => reason.summary.length > 0));
+});
+
+test("resolveCapabilityRole: passes generic Bearing advisories through without interpreting them", () => {
+  const result = resolveCapabilityRole("chat", request({
+    task: { family: "chat", suite: null },
+    inventory: [candidate("remote", "cloud", "remote", "remote"), candidate("local", "local", "local", "local")],
+    advisories: [{ id: "quality-fact", measurementKey: "quality", aggregation: "fact" }],
+  }), options({ policy: {
+    requirements: [],
+    preferences: [{ measurementKey: "quality", aggregation: "fact", direction: "maximize", weight: 1 }],
+    advisories: [{ id: "context-projection", measurementKey: "context.projection", aggregation: "fact" }],
+    locality: "remote-allowed",
+  } }));
+
+  assert.equal(result.target?.advisories.find((item) => item.id === "context-projection")?.value, "full");
+  assert.equal(result.target?.advisories.find((item) => item.id === "quality-fact")?.value, 10);
+  assert.equal(result.alternatives[0]?.advisories.find((item) => item.id === "context-projection")?.value, "focused");
+  assert.deepEqual(result.advisories, result.target?.advisories);
+  assert.ok(result.advisories.every((item) => item.evidence.evidenceIds.length > 0));
+});
+
+test("resolveCapabilityRole: preserves non-present advisories on Bearing exclusions", () => {
+  const result = resolveCapabilityRole("chat", request({
+    task: { family: "chat", suite: null },
+    inventory: [candidate("remote", "cloud", "remote", "remote"), candidate("local", "local", "local", "local")],
+    requirements: [{ measurementKey: "quality", aggregation: "fact", operator: "gte", value: 8 }],
+    advisories: [{ id: "missing-fact", measurementKey: "not.observed", aggregation: "fact" }],
+  }), options({ policy: {
+    requirements: [],
+    preferences: [],
+    advisories: [{ id: "context-projection", measurementKey: "context.projection", aggregation: "fact" }],
+    locality: "remote-allowed",
+  } }));
+
+  const excluded = result.exclusions.find((entry) => entry.candidate.id === "local");
+  assert.ok(excluded);
+  assert.equal(excluded.advisories.find((item) => item.id === "missing-fact")?.status, "missing");
+  assert.equal(excluded.advisories.find((item) => item.id === "context-projection")?.value, "focused");
+});
+
+test("resolveCapabilityRole: rejects invalid durable and request advisory composition before ranking", () => {
+  const input = request({
+    task: { family: "chat", suite: null },
+    inventory: [candidate("remote", "cloud", "remote", "remote")],
+    advisories: [{ id: "same", measurementKey: "quality", aggregation: "fact" }],
+  });
+  assert.throws(
+    () => resolveCapabilityRole("chat", input, options({ policy: {
+      requirements: [], preferences: [],
+      advisories: [{ id: "same", measurementKey: "context.projection", aggregation: "fact" }],
+      locality: "remote-allowed",
+    } })),
+    (error: unknown) => (error as { code?: string; message?: string }).code === "INVALID_CONFIG"
+      && (error as { message: string }).message.includes('duplicate id "same"'),
+  );
+
+  const sixtyFour = Array.from({ length: 64 }, (_, index) => ({ id: `durable-${index}`, measurementKey: "quality", aggregation: "fact" as const }));
+  assert.throws(
+    () => resolveCapabilityRole("chat", request({
+      ...input,
+      advisories: [{ id: "requested", measurementKey: "quality", aggregation: "fact" }],
+    }), options({ policy: { requirements: [], preferences: [], advisories: sixtyFour, locality: "remote-allowed" } })),
+    (error: unknown) => (error as { message?: string }).message?.includes("at most 64 entries") === true,
+  );
+
+  const inventory = Array.from({ length: 17 }, (_, index) => candidate(`remote-${index}`, "cloud", "remote", "remote", "remote"));
+  const sixty = sixtyFour.slice(0, 60);
+  assert.throws(
+    () => resolveCapabilityRole("chat", request({
+      task: { family: "chat", suite: null }, inventory,
+      advisories: [{ id: "requested", measurementKey: "quality", aggregation: "fact" }],
+    }), options({ policy: { requirements: [], preferences: [], advisories: sixty, locality: "remote-allowed" } })),
+    (error: unknown) => (error as { message?: string }).message?.includes("at most 1024 inventory projection cells") === true,
+  );
 });
 
 test("resolveCapabilityRole: provider model binding and Bearing canonical identity remain explicit and independent", () => {
@@ -163,6 +240,8 @@ test("resolveCapabilityRole: fixed durable, session, and environment targets are
   assert.equal(absent.target, null);
   assert.equal(absent.posture, "unavailable");
   assert.equal(absent.diagnostics[0]?.code, "DATUM_OVERRIDE_NOT_IN_INVENTORY");
+  assert.deepEqual(durable.advisories, []);
+  assert.deepEqual(durable.target?.advisories, []);
 });
 
 test("resolveCapabilityRole: bare fixed targets never dispatch through colliding role names", () => {
@@ -201,6 +280,8 @@ test("resolveCapabilityRole: missing or stale catalog uses only explicit invento
   const fallback = resolveCapabilityRole("chat", request({ task: { family: "chat", suite: null }, inventory: [candidate("local", "local", "local", "local")] }), { ...options(policy), catalog: undefined, config: { ...options(policy).config!, capabilityCatalog: { localPath: "missing.json" } } });
   assert.equal(fallback.posture, "fallback");
   assert.equal(fallback.target?.id, "local");
+  assert.deepEqual(fallback.advisories, []);
+  assert.deepEqual(fallback.target?.advisories, []);
   const noFallback = resolveCapabilityRole("chat", request({ task: { family: "chat", suite: null }, inventory: [candidate("local", "local", "local", "local")] }), { ...options({ policy: { requirements: [], preferences: [], locality: "local-only" } }), catalog: undefined, config: { ...options(policy).config!, roles: { chat: { policy: { requirements: [], preferences: [], locality: "local-only" } } }, capabilityCatalog: { localPath: "missing.json" } } });
   assert.equal(noFallback.posture, "unavailable");
   assert.equal(noFallback.target, null);
@@ -234,6 +315,20 @@ test("resolveCapabilityRole: result ordering is deterministic and config policy 
   assert.deepEqual([one.target?.id, ...one.alternatives.map((entry) => entry.id)], [two.target?.id, ...two.alternatives.map((entry) => entry.id)]);
   assert.throws(() => validateConfig({ roles: { chat: { policy: { requirements: [], preferences: [], locality: "local-only", unknown: true } } } }), (error: unknown) => (error as { code?: string }).code === "INVALID_CONFIG");
   assert.throws(() => validateConfig({ roles: { chat: { policy: { requirements: [{ measurementKey: "quality", aggregation: "fact", operator: "gte", value: "high" }], preferences: [], locality: "local-only" } } } }), (error: unknown) => (error as { code?: string }).code === "INVALID_CONFIG");
+  assert.throws(() => validateConfig({ roles: { chat: { policy: { requirements: [], preferences: [], advisories: [
+    { id: "same", measurementKey: "quality", aggregation: "fact" },
+    { id: "same", measurementKey: "context.projection", aggregation: "fact" },
+  ], locality: "local-only" } } } }), (error: unknown) => (error as { code?: string }).code === "INVALID_CONFIG");
+  assert.throws(() => validateConfig({ roles: { chat: { policy: { requirements: [], preferences: [], advisories: [
+    { id: "é".repeat(129), measurementKey: "quality", aggregation: "fact" },
+  ], locality: "local-only" } } } }), (error: unknown) => (error as { code?: string; message?: string }).code === "INVALID_CONFIG"
+    && (error as { message: string }).message.includes("256 UTF-8 bytes"));
+  for (const value of ["", " padded ", "é".repeat(129)]) {
+    assert.throws(() => validateConfig({ roles: { chat: { policy: {
+      requirements: [{ measurementKey: "quality", aggregation: "fact", operator: "eq", value }],
+      preferences: [], locality: "local-only",
+    } } } }), (error: unknown) => (error as { code?: string }).code === "INVALID_CONFIG");
+  }
 });
 
 test("resolveCapabilityRole: malformed request envelope, Bearing execution, and criteria are typed INVALID_CONFIG", () => {

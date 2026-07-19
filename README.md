@@ -85,6 +85,7 @@ inventory can be selected.
       "policy": {
         "requirements": [{ "measurementKey": "model.context.max_tokens", "aggregation": "fact", "operator": "gte", "value": 32768 }],
         "preferences": [{ "measurementKey": "quality", "aggregation": "mean", "direction": "maximize", "weight": 1 }],
+        "advisories": [{ "id": "context-projection", "measurementKey": "context.projection", "aggregation": "fact" }],
         "locality": "local-only",
         "fallback": "qwen3@ollama"
       }
@@ -103,11 +104,15 @@ Bearing ranking, but still must match exactly one supplied candidate and pass
 Datum checks. A policy fallback is considered only for missing/stale catalog
 state and is subject to the same inventory boundary. Results include catalog
 provenance, evidence, uncertainty, exclusions, and explicit override/fallback
-state; they never materialize secrets or fetch a catalog.
-
-Bearing rank v1 has no advisory projection output. Datum deliberately does not
-infer projection recommendations from model names or catalog observations;
-generic advisory projection is the follow-up boundary in Bearing#22.
+state; they never materialize secrets or fetch a catalog. Policy and request
+advisories are additive. Datum asks Bearing rank v2 to project them for every
+ranked or excluded candidate and passes the resulting status, value/unit,
+evidence, and uncertainty through unchanged. It does not infer advisory ids,
+measurement keys, or recommendation meaning from model names or catalog
+internals. Fixed, override, and fallback resolution return no advisories because
+they bypass Bearing. The combined durable and request set must use unique ids,
+contain at most 64 advisories, and produce at most 1,024 inventory projection
+cells.
 
 ### Capability catalog snapshots
 
