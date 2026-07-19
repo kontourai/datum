@@ -1,8 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { compileCatalog, serializeCatalog } from "@kontourai/bearing";
 import { tempTree, SAMPLE, startFakeHttpServer } from "./helpers.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -374,6 +376,105 @@ test("cli test-connection: missing <provider> errors", () => {
     assert.equal(r.status, 1);
     assert.ok(r.stderr.includes("<provider>"));
   });
+});
+
+test("cli catalog refresh/status: prints compact metadata without the catalog body", async () => {
+  const snapshot = compileCatalog([], { asOf: "2026-07-18T00:00:00.000Z" });
+  const server = await startFakeHttpServer((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json", etag: '"catalog-v1"' });
+    res.end(serializeCatalog(snapshot));
+  });
+  const t = tempTree();
+  try {
+    t.writeRepo({ capabilityCatalog: { remoteUrl: `${server.url}/snapshot.json` } });
+    const refreshed = await runAsync(["catalog", "refresh", "--json"], { HOME: t.home }, t.cwd);
+    assert.equal(refreshed.status, 0, refreshed.stderr);
+    const refreshMetadata = JSON.parse(refreshed.stdout);
+    assert.equal(refreshMetadata.digest, snapshot.digest);
+    assert.equal(refreshMetadata.source.kind, "remote");
+    assert.ok(!refreshed.stdout.includes("schemaVersion"));
+    await server.close();
+    const status = run(["catalog", "status", "--json"], { HOME: t.home }, t.cwd);
+    assert.equal(status.status, 0, status.stderr);
+    const statusMetadata = JSON.parse(status.stdout);
+    assert.equal(statusMetadata.digest, snapshot.digest);
+    assert.equal(statusMetadata.source.location, `${server.url}/<redacted>`);
+  } finally {
+    t.cleanup();
+    // close() is idempotent only when the server is still open.
+    try { await server.close(); } catch { /* already closed after refresh */ }
+  }
+});
+
+test("cli catalog --json: hard failures remain machine-readable", () => {
+  const t = tempTree();
+  try {
+    t.writeRepo({ capabilityCatalog: { remoteUrl: "https://catalog.example/snapshot.json" } });
+    const missing = run(["catalog", "status", "--json"], { HOME: t.home }, t.cwd);
+    assert.equal(missing.status, 1);
+    assert.equal(missing.stderr, "");
+    const missingBody = JSON.parse(missing.stdout);
+    assert.equal(missingBody.schemaVersion, "datum.catalog.error/v1");
+    assert.equal(missingBody.ok, false);
+    assert.equal(missingBody.error.code, "CAPABILITY_CATALOG_UNAVAILABLE");
+    assert.equal(typeof missingBody.error.message, "string");
+
+    writeFileSync(path.join(t.cwd, "catalog.json"), "not-json");
+    t.writeRepo({ capabilityCatalog: { localPath: "catalog.json" } });
+    const malformed = run(["catalog", "status", "--json"], { HOME: t.home }, t.cwd);
+    assert.equal(malformed.status, 1);
+    assert.equal(malformed.stderr, "");
+    const malformedBody = JSON.parse(malformed.stdout);
+    assert.equal(malformedBody.schemaVersion, "datum.catalog.error/v1");
+    assert.equal(malformedBody.ok, false);
+    assert.equal(malformedBody.error.code, "CAPABILITY_CATALOG_MALFORMED");
+    assert.equal(malformedBody.error.message, "local capability catalog is not a valid Bearing catalog.");
+    assert.doesNotMatch(malformed.stdout, /catalog\.json|not-json|Users/);
+
+    t.writeRepo({ capabilityCatalog: { localPath: "private/secret/catalog.json" } });
+    const localMissing = run(["catalog", "status", "--json"], { HOME: t.home }, t.cwd);
+    assert.equal(localMissing.status, 1);
+    assert.equal(localMissing.stderr, "");
+    const localMissingBody = JSON.parse(localMissing.stdout);
+    assert.equal(localMissingBody.error.code, "CAPABILITY_CATALOG_UNAVAILABLE");
+    assert.equal(localMissingBody.error.message, "Local capability catalog is unavailable.");
+    assert.doesNotMatch(localMissing.stdout, /private|secret|catalog\.json|Users/);
+
+    t.writeRepo({ capabilityCatalog: { remoteUrl: "http://127.0.0.1:1/snapshot.json" } });
+    const unavailable = run(["catalog", "refresh", "--json"], { HOME: t.home }, t.cwd);
+    assert.equal(unavailable.status, 1);
+    assert.equal(unavailable.stderr, "");
+    const unavailableBody = JSON.parse(unavailable.stdout);
+    assert.equal(unavailableBody.schemaVersion, "datum.catalog.error/v1");
+    assert.equal(unavailableBody.ok, false);
+    assert.equal(unavailableBody.error.code, "CAPABILITY_CATALOG_UNAVAILABLE");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("cli catalog --json redacts an unavailable working directory", () => {
+  const t = tempTree();
+  try {
+    t.writeRepo({ capabilityCatalog: { remoteUrl: "https://93.184.216.34/snapshot.json" } });
+    const missing = path.join(t.dir, "private", "missing");
+    const r = run([
+      "catalog",
+      "status",
+      "--json",
+      "--cwd",
+      missing,
+      "--repo-config-path",
+      path.join(t.cwd, ".datum", "config.json"),
+    ], { HOME: t.home }, t.dir);
+    assert.equal(r.status, 1);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.error.code, "CAPABILITY_CATALOG_UNAVAILABLE");
+    assert.equal(out.error.message, "Datum working directory is unavailable.");
+    assert.doesNotMatch(r.stdout + r.stderr, /private|missing|cache\.ts|Node\.js/);
+  } finally {
+    t.cleanup();
+  }
 });
 
 // --- --cwd / --repo-config-path / --user-config-path plumbing (issue #4) ---

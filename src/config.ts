@@ -94,5 +94,13 @@ export function loadConfig(opts: ResolveOptions = {}): LoadedConfig {
   if (repo) sources.push(repoPath);
 
   const merged = deepMerge(user ?? {}, repo ?? {});
+  const userCatalog = isPlainObject(user?.capabilityCatalog) ? user.capabilityCatalog : undefined;
+  const repoCatalog = isPlainObject(repo?.capabilityCatalog) ? repo.capabilityCatalog : undefined;
+  if (repoCatalog !== undefined) {
+    const catalog = { ...(userCatalog ?? {}) };
+    if (repoCatalog.remoteUrl !== undefined) delete catalog.localPath;
+    if (repoCatalog.localPath !== undefined) delete catalog.remoteUrl;
+    merged.capabilityCatalog = { ...catalog, ...repoCatalog };
+  }
   return { config: validateConfig(merged), sources };
 }

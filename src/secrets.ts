@@ -9,7 +9,7 @@
  *
  * The runner is an interface so tests inject a fake and never touch the real
  * macOS Keychain or 1Password CLI. The default implementation shells out with
- * node:child_process `spawnSync` and pulls in zero runtime dependencies.
+ * the built-in node:child_process `spawnSync` implementation.
  */
 
 import { spawnSync } from "node:child_process";
@@ -38,7 +38,7 @@ export interface SecretRunner {
 const SECURITY_BIN = "/usr/bin/security";
 
 /**
- * Default runner: spawn-based, zero-dependency. Keychain is darwin-only; a
+ * Default runner: spawn-based using Node built-ins. Keychain is darwin-only; a
  * non-darwin platform yields a typed SECRET_BACKEND_UNAVAILABLE, never a crash.
  */
 export const defaultSecretRunner: SecretRunner = {

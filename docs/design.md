@@ -1,11 +1,16 @@
 # Datum design notes
 
 The design decisions this document used to hold (slices 1–3: the fixed
-principle, config precedence, secret-reference-only auth, zero-dependency
-validation, the generator-not-wrapper pattern, and the slice 2/3 additions)
+principle, config precedence, secret-reference-only auth, the former
+zero-dependency validation posture, the generator-not-wrapper pattern, and the
+slice 2/3 additions)
 have been split verbatim into frozen ADRs and are no longer edited here.
 This is a restructuring, not a rewrite — every decision's original prose is
 preserved unchanged in its new file.
+
+Those ADRs are history, not active dependency policy. The current policy is
+[`Runtime dependencies`](decisions/runtime-dependencies.md): dependencies are
+chosen by product boundary and engineering fitness, with no fixed count target.
 
 - **Frozen history**: [`docs/adr/`](adr/index.md) — numbered, immutable
   (see the banner on each file). `docs/adr/0001`–`0007` are docs/design.md's

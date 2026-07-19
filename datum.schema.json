@@ -16,6 +16,39 @@
       "type": "object",
       "description": "Role name -> model ref (model@provider or bare model).",
       "additionalProperties": { "type": "string", "pattern": "^[^@\\s]+(@[^@\\s]+)?$" }
+    },
+    "capabilityCatalog": {
+      "description": "Optional Bearing capability-catalog source. Exactly one remote snapshot URL or local snapshot path.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["remoteUrl"],
+          "properties": {
+            "remoteUrl": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://[^/?#@\\s]+(?:/[^?#\\s]*)?$",
+              "description": "Credential-free http(s) snapshot endpoint without userinfo, query parameters, or a fragment."
+            },
+            "maxAgeSeconds": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["localPath"],
+          "properties": {
+            "localPath": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?![/\\\\])(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+$",
+              "description": "Repository-relative snapshot path without parent traversal."
+            },
+            "maxAgeSeconds": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        }
+      ]
     }
   },
   "$defs": {

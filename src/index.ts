@@ -36,6 +36,16 @@ export {
   fetchOpenaiCompatibleModels,
 } from "./discover.js";
 export { enforceHttpsPolicy, safeFetch } from "./security.js";
+export {
+  loadCapabilityCatalog,
+  refreshCapabilityCatalog,
+  DEFAULT_CATALOG_MAX_RESPONSE_BYTES,
+  DEFAULT_CATALOG_REQUEST_TIMEOUT_MS,
+  DEFAULT_CATALOG_MAX_MODELS,
+  DEFAULT_CATALOG_MAX_OBSERVATIONS,
+  DEFAULT_CATALOG_MAX_OBSERVATIONS_PER_MODEL,
+  DEFAULT_CATALOG_MAX_ENTRIES_PER_OBSERVATION,
+} from "./catalog.js";
 export type {
   HttpsPolicyOptions,
   HttpsPolicyResult,
@@ -55,7 +65,21 @@ export type {
   ResolvedTarget,
   ResolvedRef,
   ResolveOptions,
+  CapabilityCatalogConfig,
 } from "./types.js";
+export type {
+  CapabilityCatalogDiagnostic,
+  CapabilityCatalogMetadata,
+  CapabilityCatalogOptions,
+  CapabilityCatalogResult,
+  CapabilityCatalogSourceMetadata,
+  CatalogTransport,
+  CatalogHostResolver,
+  ResolvedCatalogTarget,
+  CatalogFetchInit,
+  CatalogFetchResponse,
+  RefreshCapabilityCatalogOptions,
+} from "./catalog.js";
 export type { SecretRunner } from "./secrets.js";
 export type { LoadedConfig } from "./config.js";
 export type {
