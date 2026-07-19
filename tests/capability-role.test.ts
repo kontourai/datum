@@ -32,7 +32,7 @@ function catalog() {
     kind: "declaration",
     model: { id, revision: null, quantization: null },
     execution: { kind: "exact", ...execution },
-    task: null,
+    task: { family: "chat", suite: null, taskId: null, evaluator: { id: "fixture", version: "1" } },
     measurements: [
       { key: "quality", kind: "fact", value: id === "remote" ? 10 : 5 },
       { key: "context.projection", kind: "fact", value: id === "remote" ? "full" : "focused" },
