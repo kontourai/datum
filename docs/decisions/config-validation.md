@@ -1,19 +1,23 @@
 ---
-status: needs-decision
+status: current
 subject: Config validation
-decided: 2026-07-03
+decided: 2026-07-18
 evidence:
   - kind: adr
     ref: docs/adr/0004-zero-deps-validation.md
+  - kind: issue
+    ref: https://github.com/kontourai/datum/issues/14
 ---
 # Config validation
 
-This subject has provenance in frozen ADR history ([0004-zero-deps-validation.md](../adr/0004-zero-deps-validation.md)) but no living
-decision has been ratified yet under the topic-keyed decision registry
-(`context/contracts/decision-registry-contract.md` in kontourai/flow-agents).
-This stub records that the subject is open and links the frozen ADR(s) as
-provenance; it is not a decision.
+Datum directly validates its closed configuration shape and mirrors the
+normative `datum.schema.json`. Direct validation remains a good fit while the
+surface is small: it keeps typed secret-reference checks explicit and makes
+runtime/schema parity testable without a general schema engine.
 
-When a living decision is ratified for config validation,
-update this file's `status` to `current`, add rationale, and keep the
-`adr` evidence links as provenance for the history that led here.
+This does not preserve ADR 0004 as a blanket zero-dependency rule. If the config
+surface grows enough that a maintained validator is safer or clearer, Datum may
+adopt one under the current
+[`Runtime dependencies`](./runtime-dependencies.md) decision. Config validation
+owns Datum config only; Bearing remains authoritative for Bearing catalog
+validation rather than being reimplemented here.

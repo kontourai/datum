@@ -43,7 +43,9 @@
     "freeze:adrs": "node scripts/freeze-adrs.mjs",
     "verify": "npm run check:decisions && npm run typecheck && npm test && npm run check:pack"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@kontourai/bearing": "0.1.0"
+  },
   "devDependencies": {
     "@types/node": "^25.6.0",
     "typescript": "^5.8.0"

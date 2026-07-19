@@ -54,7 +54,14 @@ export interface DatumConfig {
   providers?: Record<string, ProviderConfig>;
   /** Role name -> model ref ("model@provider" or bare "model"). */
   roles?: Record<string, string>;
+  /** Optional validated Bearing capability catalog source. */
+  capabilityCatalog?: CapabilityCatalogConfig;
 }
+
+/** Exactly one durable source for a Bearing capability-catalog snapshot. */
+export type CapabilityCatalogConfig =
+  | { remoteUrl: string; localPath?: never; maxAgeSeconds?: number }
+  | { localPath: string; remoteUrl?: never; maxAgeSeconds?: number };
 
 /**
  * Full resolution, WITH the API key materialized. Returned by `resolve()`. The

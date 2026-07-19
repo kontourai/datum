@@ -14,6 +14,10 @@ const consumer = path.join(temporary, "consumer");
 const packageDestination = process.env.DATUM_PACK_DESTINATION
   ? path.resolve(process.env.DATUM_PACK_DESTINATION)
   : path.join(temporary, "artifacts");
+const preinstallTarballs = (process.env.KONTOUR_PACK_PREINSTALL_TARBALLS ?? "")
+  .split(path.delimiter)
+  .filter(Boolean)
+  .map((tarball) => path.resolve(tarball));
 
 try {
   await mkdir(packageDestination, { recursive: true });
@@ -48,6 +52,22 @@ try {
     "dist/src/auth.js",
     "dist/src/claudecode.d.ts",
     "dist/src/claudecode.js",
+    "dist/src/catalog.d.ts",
+    "dist/src/catalog.js",
+    "dist/src/catalog/cache.d.ts",
+    "dist/src/catalog/cache.js",
+    "dist/src/catalog/limits.d.ts",
+    "dist/src/catalog/limits.js",
+    "dist/src/catalog/shared.d.ts",
+    "dist/src/catalog/shared.js",
+    "dist/src/catalog/snapshot.d.ts",
+    "dist/src/catalog/snapshot.js",
+    "dist/src/catalog/source.d.ts",
+    "dist/src/catalog/source.js",
+    "dist/src/catalog/transport.d.ts",
+    "dist/src/catalog/transport.js",
+    "dist/src/catalog/types.d.ts",
+    "dist/src/catalog/types.js",
     "dist/src/config.d.ts",
     "dist/src/config.js",
     "dist/src/discover.d.ts",
@@ -85,6 +105,22 @@ try {
 
   await mkdir(consumer);
   await writeFile(path.join(consumer, "package.json"), '{"private":true,"type":"module"}\n');
+  if (preinstallTarballs.length > 0) {
+    await execFileAsync(
+      "npm",
+      [
+        "install",
+        "--dry-run=false",
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        "--cache",
+        npmCache,
+        ...preinstallTarballs,
+      ],
+      { cwd: consumer, maxBuffer: 10 * 1024 * 1024 },
+    );
+  }
   await execFileAsync(
     "npm",
     [
@@ -108,6 +144,7 @@ try {
         'import * as datum from "@kontourai/datum";',
         'if (typeof datum.validateConfig !== "function") throw new Error("missing validateConfig");',
         'if (typeof datum.resolveRef !== "function") throw new Error("missing resolveRef");',
+        'if (typeof datum.loadCapabilityCatalog !== "function") throw new Error("missing loadCapabilityCatalog");',
       ].join("\n"),
     ],
     { cwd: consumer },

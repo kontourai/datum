@@ -6,9 +6,9 @@ config every tool wants.** Datum answers a single question — *which backend,
 which model, whose key, what base URL* — for a role name or a `model@provider`
 ref, and hands back a plain `{ provider, kind, baseUrl?, apiKey, model }` object.
 It abstracts *configuration resolution, not invocation*: it imports no AI SDK,
-wraps no runtime, and makes no model calls (with three narrow, opt-in
-exceptions: `datum doctor --probe`, `datum discover`, and `datum
-test-connection`).
+wraps no runtime, and makes no model calls (with four narrow, opt-in
+exceptions: `datum doctor --probe`, `datum discover`, `datum test-connection`,
+and `datum catalog refresh`).
 
 ## Install
 
@@ -16,7 +16,8 @@ test-connection`).
 npm install @kontourai/datum
 ```
 
-Node >= 22. Zero runtime dependencies.
+Node >= 22. The only runtime dependency is the exact `@kontourai/bearing`
+contract package; Datum imports no AI SDK or schema engine.
 
 > Status: `@kontourai/datum` is published. Hosted release workflows remain
 > manual-only while CI is out of budget; local verification is authoritative.
@@ -68,6 +69,49 @@ is **`.datum/config.json`**. Commit it.
   is offered by more than one provider).
 
 The normative schema is [`datum.schema.json`](./datum.schema.json).
+
+### Capability catalog snapshots
+
+Datum can retain one validated [Bearing](https://github.com/kontourai/bearing)
+capability-catalog snapshot alongside its provider registry. Declare exactly one
+source — a remote snapshot URL or a local snapshot path — and optionally bound
+its age:
+
+```json
+{
+  "capabilityCatalog": {
+    "remoteUrl": "https://catalog.example/snapshot.json",
+    "maxAgeSeconds": 86400
+  }
+}
+```
+
+Remote URLs must be credential-free `http(s)` endpoints without userinfo,
+query parameters, or fragments. Use a separately controlled endpoint rather
+than committing a signed URL or token to durable config.
+Config precedence remains per-key: a repo-level `remoteUrl` or `localPath`
+replaces the user-level source discriminator without creating an invalid mixed
+source, while `maxAgeSeconds` inherits unless the repo overrides it.
+
+`localPath` must be repository-relative and remain under the real Datum working
+directory after symlink resolution. Local snapshots are read and validated
+directly. Remote snapshots are fetched only by explicit
+refresh, then validated with Bearing and saved under the disposable,
+source-keyed cache `<cwd>/.kontourai/datum/bearing`. Snapshots are immutable and
+content-addressed by their Bearing digest. State candidates are also immutable;
+Datum selects the greatest catalog `asOf`, so concurrent refresh processes
+cannot regress the active catalog by finishing out of order. Different digests
+at one `asOf` are a typed conflict; publishers must advance `asOf` for every
+revision.
+The default remote transport resolves and validates every address, then pins
+the actual connection to those validated results at each redirect hop. Each
+hop has a 30-second overall deadline; library callers may set
+`requestTimeoutMs` explicitly. An injected `transport` receives the validated
+address set and must connect only to those addresses. Remote source metadata
+exposes only the origin plus a redacted path marker.
+`catalog status` and library loading never use the network. If refresh fails, a
+valid non-stale cache is returned with a typed fallback diagnostic; otherwise
+the typed failure is raised.
 
 ### Secret backends (keychain / 1Password)
 
@@ -131,6 +175,7 @@ datum list [config flags]                                          Providers + r
 datum doctor [--probe] [--allow-insecure] [config flags]            Diagnose config; --probe makes ONE live call/provider
 datum discover <provider> [--json] [--allow-insecure] [config flags]  Fetch the live model list from an openai-compatible provider
 datum test-connection <provider> [--allow-insecure] [config flags]  Validate auth + reachability for one provider; exits non-zero on failure
+datum catalog status|refresh [--json] [--allow-insecure] [config flags]  Show catalog metadata or explicitly refresh it
 datum sync opencode [--dry-run] [config flags]                      Generate opencode's provider block from the registry
 datum sync claude-code --role <name> [--dry-run] [config flags]     Generate Claude Code's settings env block for a role
 ```
@@ -151,8 +196,9 @@ datum sync claude-code --role <name> [--dry-run] [config flags]     Generate Cla
   check's pass/fail printed and the failure distinguished into one of three
   classes: bad/missing credentials, an unreachable endpoint, or a response
   that is not shaped like the expected `openai-compatible` `/models` payload.
-- `--allow-insecure` (accepted by `doctor --probe`, `discover`, and
-  `test-connection`, the 3 commands that make live requests): `https://` is
+- `--allow-insecure` (accepted by `doctor --probe`, `discover`,
+  `test-connection`, and explicit `catalog refresh`, the commands that make
+  live requests): `https://` is
   always allowed; loopback `http://` (`localhost`, `127.0.0.0/8`, `::1`,
   `::ffff:127.x.x.x` — Ollama/LM Studio-style local providers) is allowed
   silently; `http://` to any other host is blocked by default with an
@@ -172,7 +218,7 @@ datum sync claude-code --role <name> [--dry-run] [config flags]     Generate Cla
 
 ### Config-location flags
 
-Every subcommand (`resolve`, `list`, `doctor`, `sync opencode`, `sync claude-code`)
+Every subcommand (including `catalog status` and `catalog refresh`)
 accepts the same three config-location flags, threaded straight into the
 library's existing `ResolveOptions`/`loadConfig` parameters — pure plumbing, no
 new resolution behavior. Flags may appear anywhere on the command line, before
@@ -223,9 +269,9 @@ traverse today speaks **anthropic-compatible only**.
 - **Not a router at call time.** It picks the backend for a ref up front; it
   does not load-balance, retry, or fail over live requests.
 
-The deliberate exceptions are `datum doctor --probe`, `datum discover`, and
-`datum test-connection`, each a single minimal opt-in live call made only
-when explicitly invoked.
+The deliberate exceptions are `datum doctor --probe`, `datum discover`,
+`datum test-connection`, and `datum catalog refresh`, each a minimal opt-in
+live call made only when explicitly invoked.
 
 ## Design
 

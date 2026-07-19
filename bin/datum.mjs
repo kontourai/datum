@@ -14,6 +14,7 @@
  *   datum doctor [--probe] [--allow-insecure] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
  *   datum discover <provider> [--json] [--allow-insecure] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
  *   datum test-connection <provider> [--allow-insecure] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
+ *   datum catalog status|refresh [--json] [--allow-insecure (refresh only)] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
  *   datum sync opencode [--dry-run] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
  *   datum sync claude-code --role <name> [--dry-run] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
  *
@@ -54,6 +55,8 @@ import {
   runDoctor,
   discoverModels,
   testConnection,
+  loadCapabilityCatalog,
+  refreshCapabilityCatalog,
   DatumError,
 } from "../dist/src/index.js";
 
@@ -122,12 +125,13 @@ Usage:
   datum doctor [--probe] [--allow-insecure] [config flags]         Diagnose config; --probe makes one live call/provider
   datum discover <provider> [--json] [--allow-insecure] [config flags]  Fetch the live model list from an openai-compatible provider
   datum test-connection <provider> [--allow-insecure] [config flags]  Validate auth + reachability for one provider
+  datum catalog status|refresh [--json] [--allow-insecure] [config flags] Show cached metadata or explicitly refresh it
   datum sync opencode [--dry-run] [config flags]                  Generate opencode provider config from the registry
   datum sync claude-code --role <name> [--dry-run] [config flags] Generate Claude Code settings env block for a role
 
 Config flags (all subcommands):
 ${CONFIG_FLAGS_USAGE}
-HTTPS policy (doctor --probe / discover / test-connection): loopback
+HTTPS policy (doctor --probe / discover / test-connection / catalog refresh): loopback
 http:// (localhost, 127.0.0.0/8, ::1, ::ffff:127.x.x.x) is always allowed;
 non-loopback http:// is blocked unless --allow-insecure is passed, which
 still warns to stderr. The policy is re-checked on every redirect hop, so a
@@ -289,6 +293,40 @@ async function cmdTestConnection() {
   if (!report.ok) process.exit(1);
 }
 
+function writeCatalogMetadata(metadata, asJson) {
+  if (asJson) {
+    process.stdout.write(JSON.stringify(metadata, null, 2) + "\n");
+    return;
+  }
+  const lines = [
+    `source:     ${metadata.source.kind} ${metadata.source.location}`,
+    `digest:     ${metadata.digest}`,
+    `asOf:       ${metadata.asOf}`,
+    `ageSeconds: ${metadata.ageSeconds}`,
+    `cache:      ${metadata.notModified ? "not modified" : metadata.fallback ? "fallback" : "current"}`,
+  ];
+  if (metadata.etag) lines.push(`etag:       ${metadata.etag}`);
+  if (metadata.fetchedAt) lines.push(`fetchedAt:  ${metadata.fetchedAt}`);
+  for (const diagnostic of metadata.diagnostics) lines.push(`diagnostic: ${diagnostic.code}: ${diagnostic.message}`);
+  process.stdout.write(lines.join("\n") + "\n");
+}
+
+async function cmdCatalog() {
+  const [, action] = positionals();
+  if (action !== "status" && action !== "refresh") {
+    die('catalog: expected "status" or "refresh".\n\n' + USAGE);
+  }
+  if (has("--allow-insecure") && action !== "refresh") {
+    die("catalog status: --allow-insecure is only valid for explicit refresh.");
+  }
+  const opts = configOpts();
+  const result = action === "refresh"
+    ? await refreshCapabilityCatalog({ ...opts, allowInsecure: has("--allow-insecure") })
+    : loadCapabilityCatalog(opts);
+  for (const warning of result.metadata.warnings) process.stderr.write(`warning: ${warning}\n`);
+  writeCatalogMetadata(result.metadata, has("--json"));
+}
+
 function opencodeConfigPath() {
   return path.join(os.homedir(), ".config", "opencode", "opencode.json");
 }
@@ -388,6 +426,9 @@ async function main() {
       case "test-connection":
         await cmdTestConnection();
         break;
+      case "catalog":
+        await cmdCatalog();
+        break;
       case "sync":
         cmdSync();
         break;
@@ -401,8 +442,20 @@ async function main() {
         die(`unknown command "${cmd}".\n\n` + USAGE);
     }
   } catch (err) {
-    if (err instanceof DatumError) die(`${err.code}: ${err.message}`);
-    throw err;
+    const failure = err instanceof DatumError
+      ? err
+      : new DatumError("INTERNAL_ERROR", "Unexpected internal failure.");
+    if (failure instanceof DatumError) {
+      if (positionals()[0] === "catalog" && has("--json")) {
+        process.stdout.write(JSON.stringify({
+          schemaVersion: "datum.catalog.error/v1",
+          ok: false,
+          error: { code: failure.code, message: failure.message },
+        }, null, 2) + "\n");
+        process.exit(1);
+      }
+      die(`${failure.code}: ${failure.message}`);
+    }
   }
 }
 

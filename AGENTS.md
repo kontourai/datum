@@ -7,8 +7,9 @@ returns inert `{ provider, kind, baseUrl?, apiKey, model }` data. It imports no
 AI SDK and makes no model calls. The deliberate exceptions are
 `datum doctor --probe` (a single opt-in live reachability call per provider),
 `datum discover` (fetches an openai-compatible provider's live model list),
-and `datum test-connection` (validates auth + reachability for one provider)
-— all three are explicit, opt-in commands.
+`datum test-connection` (validates auth + reachability for one provider), and
+`datum catalog refresh` (fetches a declared Bearing snapshot) — all four are
+explicit, opt-in commands.
 
 ## Source Of Truth
 
@@ -26,9 +27,14 @@ and `datum test-connection` (validates auth + reachability for one provider)
 ## Invariants
 
 - Auth is by reference only: `{ env: "VAR_NAME" }`, never a literal secret.
-- Zero runtime dependencies; validation is hand-rolled (no ajv in the runtime).
+- Runtime dependencies are a product-boundary decision, not a count target.
+  Prefer a dependency when it preserves one authority or materially improves
+  correctness and maintenance. The current package pins `@kontourai/bearing`
+  exactly; Datum imports no AI SDK because invocation remains out of scope.
 - No command prints a secret value without `--reveal`.
-- Only `doctor --probe`, `discover`, and `test-connection` may touch the network.
+- Only `doctor --probe`, `discover`, `test-connection`, and the explicit
+  `catalog refresh` operation may touch the network. Ordinary catalog load and
+  `catalog status` are offline-only.
 
 ## Useful Commands
 

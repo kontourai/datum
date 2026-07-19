@@ -7,8 +7,9 @@ registry. It abstracts CONFIGURATION RESOLUTION, not invocation — it answers
 model }` data. It imports no AI SDK and makes no model calls. The deliberate
 exceptions are `datum doctor --probe` (a single opt-in live reachability call
 per provider), `datum discover` (fetches an openai-compatible provider's live
-model list), and `datum test-connection` (validates auth + reachability for
-one provider) — all three are explicit, opt-in commands.
+model list), `datum test-connection` (validates auth + reachability for one
+provider), and `datum catalog refresh` (fetches a declared Bearing snapshot) —
+all are explicit, opt-in commands.
 
 ## Term Glossary
 
@@ -17,8 +18,8 @@ one provider) — all three are explicit, opt-in commands.
   answers *which backend, which model, whose key, what base URL* and stops;
   the caller's own SDK makes any model call. No AI SDK dependency, no API
   call, no runtime wrapping lives in the resolver itself. The deliberate,
-  opt-in exceptions are `datum doctor --probe`, `datum discover`, and `datum
-  test-connection`.
+  opt-in exceptions are `datum doctor --probe`, `datum discover`, `datum
+  test-connection`, and `datum catalog refresh`.
 - **Config Precedence**: the two independent layers datum composes to answer
   a ref. The FILE layer deep-merges user-level
   `~/.config/kontour/datum.json` (base) under repo-level `.datum/config.json`
@@ -40,9 +41,37 @@ one provider) — all three are explicit, opt-in commands.
   reference.
 - **Config Validation**: datum's hand-rolled validator (`src/validate.ts`)
   that mirrors the normative `datum.schema.json` and additionally enforces
-  the secret-literal rule a plain JSON Schema cannot express. Zero runtime
-  dependencies — no ajv or other schema engine ships in the resolver's
-  runtime path.
+  the secret-literal rule a plain JSON Schema cannot express. No ajv or other
+  schema engine ships in the resolver's runtime path.
+- **Runtime Dependencies**: libraries selected by product ownership and
+  engineering fitness, not by a fixed dependency-count target. The exact
+  `@kontourai/bearing` package currently owns compilation, parsing, and
+  canonical serialization of Bearing catalog contracts. Datum does not
+  duplicate those semantics. It imports no AI SDK because model invocation is
+  outside Datum's boundary, not because dependencies are categorically
+  forbidden. Frozen ADR 0004 records the former zero-dependency posture; the
+  living decision registry carries the current policy.
+- **Capability Catalog**: an optional, validated `capabilityCatalog` declaration
+  in durable datum config that points to exactly one Bearing snapshot: either a
+  `remoteUrl` or a `localPath`, with an optional positive `maxAgeSeconds`.
+  Remote URLs are credential-free endpoints; embedded userinfo, query
+  parameters, and fragments are rejected from durable config.
+  Remote snapshots are validated before they enter the disposable,
+  source-keyed cache at `.kontourai/datum/bearing`; the catalog digest names the
+  immutable snapshot. Immutable state candidates are ordered by catalog
+  `asOf`; distinct digests at one `asOf` are a typed source conflict. This
+  prevents out-of-order processes from regressing active state without a lock
+  or silently choosing between incompatible revisions. The
+  default remote transport binds DNS validation to the actual connection and
+  applies a bounded overall deadline to every hop. Injected transports receive
+  the validated address set and own the matching pinned connection.
+  Config precedence remains per-key: a repo source discriminator replaces the
+  user source discriminator atomically while unrelated catalog keys such as
+  `maxAgeSeconds` still inherit unless the repo overrides them.
+  `catalog status` and library load are offline-only; `catalog refresh` alone
+  fetches, conditionally revalidates with ETags, and can report a typed fallback
+  to a still-fresh cache. Metadata is catalog provenance, never catalog body or
+  source path, query, or userinfo secrets.
 - **Config Generators**: datum's `sync` commands, which emit a target tool's
   OWN native config format and stop — datum never proxies or intercepts that
   tool's calls. `datum sync opencode` emits opencode's `provider` block;
@@ -67,14 +96,14 @@ one provider) — all three are explicit, opt-in commands.
   or executing repository code. CI, Release Please, and publication are
   manual-only while hosted CI is out of budget.
 - **HTTPS Enforcement**: the policy `datum doctor --probe`, `datum
-  discover`, and `datum test-connection` apply to every outbound request
+  discover`, `datum test-connection`, and `datum catalog refresh` apply to every outbound request
   before it is sent. `https://` is always allowed; loopback `http://`
   (`localhost`, the `127.0.0.0/8` range, `::1`) is allowed silently, since
   that is how Ollama/LM Studio-style local providers are typically
   configured. A non-loopback `http://` `baseUrl` is blocked by default with
   an actionable error; passing `--allow-insecure` proceeds anyway but still
   emits a warning. Enforced once via `enforceHttpsPolicy()` in
-  `src/security.ts`, consumed by all three network-touching functions
+  `src/security.ts`, consumed by all network-touching functions
   rather than re-implemented per command.
 
 ## Decision Registry

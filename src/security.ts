@@ -4,16 +4,17 @@
  * `safeFetch` wrapper that is the SINGLE place a key-bearing request is
  * actually issued.
  *
- * All three network-touching functions (`probeAnthropicCompatible`,
+ * All network-touching functions (`probeAnthropicCompatible`,
  * `probeOpenaiCompatible` in `src/doctor.ts`, and
  * `fetchOpenaiCompatibleModels` in `src/discover.ts` — the latter also
- * backing `datum test-connection`) route their request through `safeFetch()`,
+ * backing `datum test-connection` — plus Bearing catalog acquisition in
+ * `src/catalog.ts`) route their request through `safeFetch()`,
  * which enforces `enforceHttpsPolicy()` on the initial URL AND on every
  * redirect target BEFORE the key-bearing request is (re-)issued to it. A
  * blocked URL — whether the configured `baseUrl` or a `Location:` a server
  * tries to bounce us to — never reaches `fetchImpl`, so the API key is never
  * transmitted to it. This keeps the policy's detection/decision logic in
- * exactly one place instead of copy-pasted across the three call sites.
+ * exactly one place instead of copy-pasted across call sites.
  *
  * Policy: `https://` is always allowed. `http://` to a loopback host
  * (`localhost`, `127.0.0.0/8`, `::1`, and the IPv4-mapped IPv6 form
@@ -54,17 +55,19 @@ const LOOPBACK_V4 = /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 // 0x7f000000..0x7fffffff, i.e. the high hextet after `ffff:` is `7f00`..`7fff`
 // (always `7f` + two more hex digits — no leading zero to strip); the low
 // hextet is 1..4 hex digits. `[::ffff:0:0]` (0.0.0.0 mapped) does not match.
-const LOOPBACK_V4_MAPPED = /^\[::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}\]$/i;
+const LOOPBACK_V4_MAPPED = /^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/i;
 
-/** True iff `hostname` (as produced by `URL`) names a loopback address. */
-function isLoopbackHost(hostname: string): boolean {
+/** True iff a URL hostname or resolved address names a loopback address. */
+export function isLoopbackHost(hostname: string): boolean {
   // Only bare-word hosts (e.g. "localhost.") need an explicit trailing-dot
   // strip; IPv4/IPv6 literals are already canonicalized by URL itself.
-  const host = hostname.endsWith(".") ? hostname.slice(0, -1) : hostname;
+  const withoutDot = hostname.endsWith(".") ? hostname.slice(0, -1) : hostname;
+  const host = (withoutDot.startsWith("[") && withoutDot.endsWith("]")
+    ? withoutDot.slice(1, -1)
+    : withoutDot).toLowerCase();
   return (
     host === "localhost" ||
     host === "::1" ||
-    host === "[::1]" ||
     LOOPBACK_V4.test(host) ||
     LOOPBACK_V4_MAPPED.test(host)
   );
@@ -117,6 +120,7 @@ export function enforceHttpsPolicy(url: string, opts: HttpsPolicyOptions = {}): 
 export interface PolicyCheckedResponse {
   status: number;
   headers?: { get(name: string): string | null };
+  body?: { cancel(reason?: unknown): Promise<void> } | null;
 }
 
 /**
@@ -138,6 +142,14 @@ export interface SafeFetchResult<R> {
 // is out of scope, the security-relevant behavior is the per-hop policy check.)
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const DEFAULT_MAX_REDIRECTS = 5;
+
+function releaseRedirectBody(response: PolicyCheckedResponse): void {
+  try {
+    void response.body?.cancel().catch(() => {});
+  } catch {
+    // Cleanup is best effort; redirect policy must not depend on stream behavior.
+  }
+}
 
 /**
  * Issue a request through the HTTPS policy, following redirects MANUALLY so the
@@ -186,6 +198,8 @@ export async function safeFetch<I extends { redirect?: "manual" }, R extends Pol
       // hand it back for the caller's own status/body mapping.
       return warning === undefined ? { blocked: false, response: res } : { blocked: false, response: res, warning };
     }
+
+    releaseRedirectBody(res);
 
     if (hop >= maxRedirects) {
       throw new Error(`too many redirects (>${maxRedirects}) starting from ${url}`);

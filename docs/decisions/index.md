@@ -10,11 +10,13 @@ Numbered ADRs under `docs/adr/` are frozen history and are not listed here.
 
 | Topic | Status | Decision |
 | --- | --- | --- |
+| [capability-catalog](./capability-catalog.md) | current | Capability Catalog |
 | [config-generators](./config-generators.md) | needs-decision | Config generators |
 | [config-precedence](./config-precedence.md) | needs-decision | Config precedence |
-| [config-validation](./config-validation.md) | needs-decision | Config validation |
+| [config-validation](./config-validation.md) | current | Config validation |
 | [configuration-resolution](./configuration-resolution.md) | needs-decision | Configuration resolution |
 | [https-enforcement](./https-enforcement.md) | current | HTTPS enforcement |
 | [provider-kinds](./provider-kinds.md) | needs-decision | Provider kinds |
 | [release-automation](./release-automation.md) | current | Release automation |
+| [runtime-dependencies](./runtime-dependencies.md) | current | Runtime dependencies |
 | [secret-references](./secret-references.md) | needs-decision | Secret references |

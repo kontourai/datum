@@ -136,6 +136,33 @@ test("safeFetch: follows an https->https redirect and re-issues the key-bearing 
   assert.deepEqual(seen, ["https://old.example/v1", "https://new.example/v1"]);
 });
 
+test("safeFetch: redirect cleanup cannot block progress or leak a rejection", async () => {
+  for (const cancel of [
+    () => new Promise<void>(() => {}),
+    () => Promise.reject(new Error("cleanup rejected")),
+  ]) {
+    let calls = 0;
+    const output = await safeFetch(
+      "https://old.example/v1",
+      GET_INIT as typeof GET_INIT & { redirect?: "manual" },
+      async (_url, _init: typeof GET_INIT & { redirect?: "manual" }) => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            status: 302,
+            headers: { get: () => "https://new.example/v1" },
+            body: { cancel },
+          };
+        }
+        return { status: 200 };
+      },
+    );
+    assert.equal(output.response?.status, 200);
+    assert.equal(calls, 2);
+  }
+  await new Promise<void>((resolve) => setImmediate(resolve));
+});
+
 test("safeFetch: BLOCKS an https->http non-loopback redirect BEFORE re-issuing — key never reaches the insecure host", async () => {
   const { impl, seen } = scriptedFetch([{ status: 302, location: "http://evil.example/steal" }]);
   const out = await safeFetch("https://api.example/v1", GET_INIT, impl);
