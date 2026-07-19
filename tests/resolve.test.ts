@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolve, resolveRef } from "../src/index.js";
+import { DatumError, resolve, resolveRef } from "../src/index.js";
 import { SAMPLE } from "./helpers.js";
 
 const base = { config: SAMPLE };
@@ -43,6 +43,17 @@ test("error: unknown role", () => {
   assert.throws(
     () => resolveRef("nope", base),
     (e: unknown) => (e as { code: string }).code === "UNKNOWN_ROLE",
+  );
+});
+
+test("resolveRef: capability policies require the inventory-aware API", () => {
+  assert.throws(
+    () => resolveRef("planner", {
+      config: { roles: { planner: { policy: { requirements: [], preferences: [], locality: "local-only" } } } },
+    }),
+    (error: unknown) => error instanceof DatumError
+      && error.code === "INVALID_CONFIG"
+      && error.message.includes("resolveCapabilityRole"),
   );
 });
 

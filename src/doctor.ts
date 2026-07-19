@@ -21,7 +21,7 @@ import { DatumError } from "./errors.js";
 import { resolve, resolveRef } from "./resolve.js";
 import { defaultSecretRunner } from "./secrets.js";
 import { safeFetch } from "./security.js";
-import type { ProviderConfig, ProviderKind, ResolveOptions } from "./types.js";
+import type { CapabilityRole, ProviderConfig, ProviderKind, ResolveOptions } from "./types.js";
 
 export type FetchLike = (
   url: string,
@@ -185,8 +185,13 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<DoctorReport>
 
   const config = loaded.config;
 
-  // 2. Every role resolves (no secret read).
-  for (const role of Object.keys(config.roles ?? {})) {
+  // 2. Fixed roles resolve without a secret read. Policy roles need caller-owned
+  // inventory, so doctor records their validated presence rather than inventing one.
+  for (const [role, definition] of Object.entries(config.roles ?? {}) as [string, CapabilityRole][]) {
+    if (typeof definition !== "string") {
+      checks.push({ name: `role ${role}`, status: "skip", detail: "capability policy requires runtime inventory; use resolve-policy" });
+      continue;
+    }
     try {
       const r = resolveRef(role, opts);
       checks.push({ name: `role ${role}`, status: "pass", detail: `-> ${r.model}@${r.provider}` });

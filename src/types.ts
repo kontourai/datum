@@ -6,6 +6,8 @@
  * library hands back. Nothing here imports an AI SDK or makes a network call.
  */
 
+import type { ExecutionProfile, ModelIdentity, RankEvidence, RankPreference, RankReason, RankRequirement, RankTask, Uncertainty } from "@kontourai/bearing";
+import type { CapabilityCatalogMetadata, CapabilityCatalogResult } from "./catalog/types.js";
 import type { SecretRunner } from "./secrets.js";
 
 /**
@@ -52,10 +54,103 @@ export interface ProviderConfig {
 
 export interface DatumConfig {
   providers?: Record<string, ProviderConfig>;
-  /** Role name -> model ref ("model@provider" or bare "model"). */
-  roles?: Record<string, string>;
+  /** Role name -> fixed model ref or an inventory-ranked capability policy. */
+  roles?: Record<string, CapabilityRole>;
   /** Optional validated Bearing capability catalog source. */
   capabilityCatalog?: CapabilityCatalogConfig;
+}
+
+/** A durable role remains fixed, or delegates selection to an explicit Bearing policy. */
+export type CapabilityRole = string | PolicyCapabilityRole;
+
+export interface PolicyCapabilityRole {
+  policy: {
+    requirements: RankRequirement[];
+    preferences: RankPreference[];
+    locality: "local-only" | "remote-allowed";
+    /** Explicit emergency target; used only when the catalog is unavailable or stale. */
+    fallback?: string;
+  };
+}
+
+/** A caller-owned launchable candidate. Datum never adds candidates to this list. */
+export interface CapabilityRuntimeCandidate {
+  /** Opaque, request-scoped id. */
+  id: string;
+  /** Datum provider id. */
+  providerId: string;
+  /** Provider model id as configured in Datum. */
+  providerModel: string;
+  locality: "local" | "remote" | "unknown";
+  model: ModelIdentity;
+  execution: ExecutionProfile;
+}
+
+export interface CapabilityRoleRequest {
+  schemaVersion: "datum.capability-role.request/v1";
+  task: RankTask;
+  inventory: CapabilityRuntimeCandidate[];
+  requirements?: RankRequirement[];
+  preferences?: RankPreference[];
+  /** Highest-precedence, request-scoped fixed model ref. Never persisted. */
+  fixedOverride?: string;
+}
+
+export type CapabilityRoleReason =
+  | "DATUM_LOCALITY_DISALLOWED"
+  | "DATUM_PROVIDER_MISSING"
+  | "DATUM_PROVIDER_MODEL_UNCONFIGURED"
+  | "DATUM_AUTH_UNAVAILABLE"
+  | "DATUM_OVERRIDE_NOT_IN_INVENTORY"
+  | "DATUM_OVERRIDE_AMBIGUOUS"
+  | "DATUM_NO_ELIGIBLE_TARGET"
+  | "DATUM_FIXED_DURABLE"
+  | "DATUM_FIXED_SESSION_OVERRIDE"
+  | "DATUM_FIXED_ENV_OVERRIDE"
+  | "DATUM_POLICY_FALLBACK"
+  | "DATUM_POLICY_RANKED";
+
+export interface CapabilityRoleTarget extends CapabilityRuntimeCandidate {
+  /** The configured Datum provider identity and effective non-secret routing. */
+  provider: string;
+  kind: ProviderKind;
+  baseUrl?: string;
+  auth: AuthStatus;
+  /** Present for policy ranking; null for fixed, override, and fallback selection. */
+  rank: number | null;
+  score: number | null;
+  /** Full Bearing rank explanations; empty when Bearing ranking was bypassed. */
+  reasons: RankReason[];
+  evidence: RankEvidence[];
+  uncertainty: Uncertainty;
+  /** Datum-owned selection reason, distinct from Bearing rank explanations. */
+  selection: { posture: "override" | "durable" | "fallback"; reason: CapabilityRoleReason };
+}
+
+export interface CapabilityRoleExclusion {
+  candidate: CapabilityRuntimeCandidate;
+  /** Full Bearing exclusion explanations, including actual/expected/contribution. */
+  reasons: RankReason[];
+  /** Datum-owned post-ranking eligibility failures. */
+  datumReasons: CapabilityRoleReason[];
+  evidence: RankEvidence[];
+  uncertainty: Uncertainty;
+}
+
+export interface CapabilityRoleResult {
+  schemaVersion: "datum.capability-role.result/v1";
+  mode: "fixed" | "policy";
+  posture: "override" | "durable" | "fallback" | "unavailable";
+  target: CapabilityRoleTarget | null;
+  alternatives: CapabilityRoleTarget[];
+  exclusions: CapabilityRoleExclusion[];
+  catalog: { digest: string; asOf: string; metadata: CapabilityCatalogMetadata } | null;
+  /** Bearing-owned evidence for the selected candidate; no advisory projection is synthesized. */
+  evidence: RankEvidence[];
+  uncertainty: Uncertainty | null;
+  override: { active: boolean; source: "session" | "env" | null; ref?: string };
+  fallback: { configured: boolean; used: boolean; ref?: string };
+  diagnostics: Array<{ code: CapabilityRoleReason | string; message: string }>;
 }
 
 /** Exactly one durable source for a Bearing capability-catalog snapshot. */
@@ -152,4 +247,12 @@ export interface ResolveOptions {
    * the real Keychain or 1Password. Defaults to a spawn-based implementation.
    */
   secretRunner?: SecretRunner;
+}
+
+export interface CapabilityRoleResolveOptions extends ResolveOptions {
+  /** Offline snapshot injection for embedded callers and deterministic tests. */
+  catalog?: CapabilityCatalogResult;
+  /** Injectable clock/cache options are accepted by the offline catalog loader. */
+  cacheRoot?: string;
+  now?: () => Date;
 }

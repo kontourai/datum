@@ -37,6 +37,20 @@ test("doctor offline: an unresolvable role fails the report", async () => {
   assert.ok(report.checks.some((c) => c.name === "role broken" && c.status === "fail"));
 });
 
+test("doctor offline: a capability policy is validated but runtime resolution is skipped", async () => {
+  const report = await runDoctor({
+    config: {
+      roles: {
+        planner: { policy: { requirements: [], preferences: [], locality: "local-only" } },
+      },
+    },
+  });
+  assert.equal(report.ok, true);
+  const role = report.checks.find((check) => check.name === "role planner");
+  assert.equal(role?.status, "skip");
+  assert.ok(role?.detail.includes("runtime inventory"));
+});
+
 const okFetch: FetchLike = async () => ({ ok: true, status: 200 });
 const authFetch: FetchLike = async () => ({ ok: false, status: 401 });
 const downFetch: FetchLike = async () => {

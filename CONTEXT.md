@@ -72,6 +72,19 @@ all are explicit, opt-in commands.
   fetches, conditionally revalidates with ETags, and can report a typed fallback
   to a still-fresh cache. Metadata is catalog provenance, never catalog body or
   source path, query, or userinfo secrets.
+- **Capability Role Resolution**: the versioned, offline
+  `resolveCapabilityRole(role, request, opts)` API. A durable role is either a
+  legacy fixed model ref or a closed policy with Bearing rank requirements,
+  preferences, locality, and an optional explicit fallback. The request owns
+  the normalized, versioned (`datum.capability-role.request/v1`) inventory and binds each opaque candidate id to a Datum
+  provider/model and a concrete Bearing model/execution profile. Datum passes
+  the complete inventory to Bearing first, retains Bearing exclusions/evidence/
+  uncertainty, and then enforces configured provider-model membership,
+  non-materializing auth availability, and locality. Overrides and fallback
+  never escape that inventory. Resolution loads only a local snapshot or remote
+  cache and never fetches. Bearing rank v1 has no advisory projection output;
+  Datum does not synthesize one from catalog observations. Bearing#22 owns that
+  future generic boundary.
 - **Config Generators**: datum's `sync` commands, which emit a target tool's
   OWN native config format and stop — datum never proxies or intercepts that
   tool's calls. `datum sync opencode` emits opencode's `provider` block;

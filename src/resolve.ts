@@ -122,8 +122,10 @@ function resolveProvider(ref: string, opts: ResolveOptions): {
     // Bare ref: role-first. Escape hatch DATUM_ROLE_<NAME> can define/override.
     const override = env[`DATUM_ROLE_${envKey(ref)}`];
     const roleTarget = override ?? config.roles?.[ref];
-    if (roleTarget !== undefined) {
+    if (typeof roleTarget === "string") {
       resolved = resolveModelRef(config, roleTarget, (m) => unknownModel(m, allModels(config)));
+    } else if (roleTarget !== undefined) {
+      throw new DatumError("INVALID_CONFIG", `Role "${ref}" is a capability policy; use resolveCapabilityRole().`);
     } else {
       resolved = resolveModelRef(config, ref, () => unknownRole(ref, Object.keys(config.roles ?? {})));
     }

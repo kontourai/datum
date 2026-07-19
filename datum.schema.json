@@ -14,8 +14,8 @@
     },
     "roles": {
       "type": "object",
-      "description": "Role name -> model ref (model@provider or bare model).",
-      "additionalProperties": { "type": "string", "pattern": "^[^@\\s]+(@[^@\\s]+)?$" }
+      "description": "Role name -> fixed model ref or inventory-ranked capability policy.",
+      "additionalProperties": { "$ref": "#/$defs/Role" }
     },
     "capabilityCatalog": {
       "description": "Optional Bearing capability-catalog source. Exactly one remote snapshot URL or local snapshot path.",
@@ -121,6 +121,66 @@
           }
         }
       ]
+    },
+    "Role": {
+      "oneOf": [
+        { "type": "string", "pattern": "^[^@\\s]+(@[^@\\s]+)?$" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["policy"],
+          "properties": {
+            "policy": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["requirements", "preferences", "locality"],
+              "properties": {
+                "requirements": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/RankRequirement" } },
+                "preferences": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/RankPreference" } },
+                "locality": { "enum": ["local-only", "remote-allowed"] },
+                "fallback": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^@\\s]+(@[^@\\s]+)?$" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "SourceClasses": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": { "enum": ["first-party", "external"] }
+    },
+    "RankRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["measurementKey", "aggregation", "operator", "value"],
+      "properties": {
+        "measurementKey": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^(?=\\S)(?!.*[\\u0000-\\u001f]).*\\S$" },
+        "aggregation": { "enum": ["fact", "mean", "min", "max", "success-rate", "count"] },
+        "operator": { "enum": ["eq", "gte", "lte"] },
+        "value": { "type": ["string", "number", "boolean"] },
+        "sourceClasses": { "$ref": "#/$defs/SourceClasses" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "operator": { "enum": ["gte", "lte"] } }, "required": ["operator"] },
+          "then": { "properties": { "value": { "type": "number" } } }
+        }
+      ]
+    },
+    "RankPreference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["measurementKey", "aggregation", "direction", "weight"],
+      "properties": {
+        "measurementKey": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^(?=\\S)(?!.*[\\u0000-\\u001f]).*\\S$" },
+        "aggregation": { "enum": ["fact", "mean", "min", "max", "success-rate", "count"] },
+        "direction": { "enum": ["maximize", "minimize"] },
+        "weight": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000000 },
+        "sourceClasses": { "$ref": "#/$defs/SourceClasses" }
+      }
     }
   }
 }
