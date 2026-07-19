@@ -64,6 +64,17 @@ test("error: unknown provider in model@provider", () => {
   );
 });
 
+test("error: inherited role and provider names are not configuration entries", () => {
+  assert.throws(
+    () => resolveRef("constructor", base),
+    (error: unknown) => (error as { code: string }).code === "UNKNOWN_ROLE",
+  );
+  assert.throws(
+    () => resolveRef("model@constructor", base),
+    (error: unknown) => (error as { code: string }).code === "UNKNOWN_PROVIDER",
+  );
+});
+
 test("error: ambiguous bare model", () => {
   const cfg = {
     providers: {

@@ -19,7 +19,9 @@ import { loadCapabilityCatalog, validateInjectedCapabilityCatalog } from "./cata
 import { DatumError } from "./errors.js";
 import { envKey, resolveConfiguredModelRef } from "./resolve.js";
 import { defaultSecretRunner } from "./secrets.js";
+import { isLoopbackHost } from "./security.js";
 import type {
+  AuthStatus,
   CapabilityRoleExclusion,
   CapabilityRoleReason,
   CapabilityRoleRequest,
@@ -27,6 +29,7 @@ import type {
   CapabilityRoleResult,
   CapabilityRoleTarget,
   CapabilityRuntimeCandidate,
+  DatumConfig,
   PolicyCapabilityRole,
   ProviderConfig,
 } from "./types.js";
@@ -76,9 +79,12 @@ function policyRole(value: unknown): value is PolicyCapabilityRole {
   return isRecord(value) && isRecord(value.policy);
 }
 
-/** Validate request-owned fields before they enter Bearing; no unknown candidate bindings are accepted. */
-function validateRequest(request: CapabilityRoleRequest): CapabilityRoleRequest {
-  request = cloneBoundedJson(request, {
+function ownValue<T>(record: Record<string, T> | undefined, key: string): T | undefined {
+  return record && Object.hasOwn(record, key) ? record[key] : undefined;
+}
+
+function cloneRequest(request: CapabilityRoleRequest): CapabilityRoleRequest {
+  const cloned = cloneBoundedJson(request, {
     label: "capability role request",
     maxBytes: MAX_REQUEST_BYTES,
     maxDepth: 16,
@@ -87,47 +93,52 @@ function validateRequest(request: CapabilityRoleRequest): CapabilityRoleRequest 
     maxStringBytes: MAX_STRING,
     fail: invalid,
     limit: invalid,
-  }) as CapabilityRoleRequest;
-  if (!isRecord(request)) invalid("capability role request must be an object.");
-  for (const key of Object.keys(request)) if (!["schemaVersion", "task", "inventory", "requirements", "preferences", "advisories", "fixedOverride"].includes(key)) invalid(`capability role request: unknown key "${key}".`);
+  });
+  if (!isRecord(cloned)) invalid("capability role request must be an object.");
+  return cloned as unknown as CapabilityRoleRequest;
+}
+
+function validateRequestEnvelope(request: CapabilityRoleRequest): void {
+  const allowed = ["schemaVersion", "task", "inventory", "requirements", "preferences", "advisories", "fixedOverride"];
+  for (const key of Object.keys(request)) if (!allowed.includes(key)) invalid(`capability role request: unknown key "${key}".`);
   if (request.schemaVersion !== "datum.capability-role.request/v1") invalid("capability role request.schemaVersion must be \"datum.capability-role.request/v1\".");
   if (!isRecord(request.task) || Object.keys(request.task).some((key) => key !== "family" && key !== "suite")) invalid("capability role request.task must contain only family and suite.");
   bounded(request.task.family, "capability role request.task.family");
   if (request.task.suite !== null && request.task.suite !== undefined) bounded(request.task.suite, "capability role request.task.suite");
   if (!Array.isArray(request.inventory) || request.inventory.length === 0 || request.inventory.length > MAX_INVENTORY) invalid(`capability role request.inventory must contain 1..${MAX_INVENTORY} candidates.`);
-  const ids = new Set<string>();
-  for (const [index, candidate] of request.inventory.entries()) {
-    if (!isRecord(candidate) || Object.keys(candidate).some((key) => !["id", "providerId", "providerModel", "locality", "model", "execution"].includes(key))) invalid(`capability role request.inventory[${index}] has an unknown key.`);
-    bounded(candidate.id, `capability role request.inventory[${index}].id`);
-    bounded(candidate.providerId, `capability role request.inventory[${index}].providerId`);
-    bounded(candidate.providerModel, `capability role request.inventory[${index}].providerModel`);
-    if (ids.has(candidate.id)) invalid(`capability role request.inventory has duplicate candidate id "${candidate.id}".`);
-    ids.add(candidate.id);
-    if (candidate.locality !== "local" && candidate.locality !== "remote" && candidate.locality !== "unknown") invalid(`capability role request.inventory[${index}].locality is invalid.`);
-    if (!isRecord(candidate.model)) invalid(`capability role request.inventory[${index}].model must be a Bearing model identity.`);
-  }
+}
+
+function validateCandidateEnvelope(candidate: unknown, index: number, ids: Set<string>): asserts candidate is CapabilityRuntimeCandidate {
+  const allowed = ["id", "providerId", "providerModel", "locality", "model", "execution"];
+  if (!isRecord(candidate) || Object.keys(candidate).some((key) => !allowed.includes(key))) invalid(`capability role request.inventory[${index}] has an unknown key.`);
+  bounded(candidate.id, `capability role request.inventory[${index}].id`);
+  bounded(candidate.providerId, `capability role request.inventory[${index}].providerId`);
+  bounded(candidate.providerModel, `capability role request.inventory[${index}].providerModel`);
+  if (ids.has(candidate.id)) invalid(`capability role request.inventory has duplicate candidate id "${candidate.id}".`);
+  ids.add(candidate.id);
+  if (candidate.locality !== "local" && candidate.locality !== "remote" && candidate.locality !== "unknown") invalid(`capability role request.inventory[${index}].locality is invalid.`);
+  if (!isRecord(candidate.model)) invalid(`capability role request.inventory[${index}].model must be a Bearing model identity.`);
+}
+
+function validateCriteria(request: CapabilityRoleRequest): void {
   for (const [key, value] of [["requirements", request.requirements], ["preferences", request.preferences]] as const) {
     if (value !== undefined && (!Array.isArray(value) || value.length > MAX_RULES)) invalid(`capability role request.${key} must contain at most ${MAX_RULES} entries.`);
-    if (Array.isArray(value)) {
-      for (const [index, rule] of value.entries()) {
-        if (!isRecord(rule)) continue;
-        bounded(rule.measurementKey, `capability role request.${key}[${index}].measurementKey`);
-        if (key === "preferences" && typeof rule.weight === "number" && rule.weight > 1_000_000) {
-          invalid(`capability role request.preferences[${index}].weight must be no greater than 1000000.`);
-        }
-      }
+    if (!Array.isArray(value)) continue;
+    for (const [index, rule] of value.entries()) {
+      if (!isRecord(rule)) continue;
+      bounded(rule.measurementKey, `capability role request.${key}[${index}].measurementKey`);
+      if (key === "preferences" && typeof rule.weight === "number" && rule.weight > 1_000_000) invalid(`capability role request.preferences[${index}].weight must be no greater than 1000000.`);
     }
   }
-  if (request.advisories !== undefined && (!Array.isArray(request.advisories) || request.advisories.length > MAX_RULES)) {
-    invalid(`capability role request.advisories must contain at most ${MAX_RULES} entries.`);
-  }
-  if (request.fixedOverride !== undefined) {
-    bounded(request.fixedOverride, "capability role request.fixedOverride");
-    if (!EXPLICIT_MODEL_REF_RE.test(request.fixedOverride)) invalid("capability role request.fixedOverride must be an explicit model@provider ref.");
-  }
-  let validated: ReturnType<typeof validateRankRequest>;
+  if (request.advisories !== undefined && (!Array.isArray(request.advisories) || request.advisories.length > MAX_RULES)) invalid(`capability role request.advisories must contain at most ${MAX_RULES} entries.`);
+  if (request.fixedOverride === undefined) return;
+  bounded(request.fixedOverride, "capability role request.fixedOverride");
+  if (!EXPLICIT_MODEL_REF_RE.test(request.fixedOverride)) invalid("capability role request.fixedOverride must be an explicit model@provider ref.");
+}
+
+function validateBearingRequest(request: CapabilityRoleRequest): RankRequestV2 {
   try {
-    validated = validateRankRequest({
+    return validateRankRequest({
       schemaVersion: "bearing.rank.request/v2",
       task: request.task,
       inventory: request.inventory.map(({ id, model, execution }) => ({ id, model, execution })),
@@ -139,7 +150,10 @@ function validateRequest(request: CapabilityRoleRequest): CapabilityRoleRequest 
     const detail = error instanceof Error ? ` ${error.message}` : "";
     invalid(`capability role request is not a valid bounded Bearing rank request.${detail}`);
   }
-  for (const [index, candidate] of validated.inventory.entries()) {
+}
+
+function validateExecutionFields(inventory: RankRequestV2["inventory"]): void {
+  for (const [index, candidate] of inventory.entries()) {
     bounded(candidate.model.id, `capability role request.inventory[${index}].model.id`);
     boundedNullable(candidate.model.revision, `capability role request.inventory[${index}].model.revision`);
     boundedNullable(candidate.model.quantization, `capability role request.inventory[${index}].model.quantization`);
@@ -149,9 +163,7 @@ function validateRequest(request: CapabilityRoleRequest): CapabilityRoleRequest 
       bounded(candidate.execution.adapter.id, `capability role request.inventory[${index}].execution.adapter.id`);
       boundedNullable(candidate.execution.adapter.version, `capability role request.inventory[${index}].execution.adapter.version`);
     }
-    if (candidate.execution.toolSurface.length > MAX_TOOL_SURFACE) {
-      invalid(`capability role request.inventory[${index}].execution.toolSurface must contain at most ${MAX_TOOL_SURFACE} entries.`);
-    }
+    if (candidate.execution.toolSurface.length > MAX_TOOL_SURFACE) invalid(`capability role request.inventory[${index}].execution.toolSurface must contain at most ${MAX_TOOL_SURFACE} entries.`);
     candidate.execution.toolSurface.forEach((tool, toolIndex) => bounded(tool, `capability role request.inventory[${index}].execution.toolSurface[${toolIndex}]`));
     if (candidate.execution.hardware !== null) {
       bounded(candidate.execution.hardware.class, `capability role request.inventory[${index}].execution.hardware.class`);
@@ -163,30 +175,72 @@ function validateRequest(request: CapabilityRoleRequest): CapabilityRoleRequest 
       boundedNullable(candidate.execution.workflow.condition, `capability role request.inventory[${index}].execution.workflow.condition`);
     }
   }
+}
+
+/** Validate request-owned fields before they enter Bearing; no unknown candidate bindings are accepted. */
+function validateRequest(request: CapabilityRoleRequest): CapabilityRoleRequest {
+  request = cloneRequest(request);
+  validateRequestEnvelope(request);
+  const ids = new Set<string>();
+  request.inventory.forEach((candidate, index) => validateCandidateEnvelope(candidate, index, ids));
+  validateCriteria(request);
+  validateExecutionFields(validateBearingRequest(request).inventory);
   return request;
 }
 
+interface ResolutionContext {
+  config: DatumConfig;
+  policy: PolicyCapabilityRole | undefined;
+  env: Record<string, string | undefined>;
+  opts: CapabilityRoleResolveOptions;
+  authByProvider: Map<string, AuthStatus>;
+}
+
+function effectiveBaseUrl(candidate: CapabilityRuntimeCandidate, provider: ProviderConfig, env: Record<string, string | undefined>): string | undefined {
+  return env[`DATUM_BASEURL_${envKey(candidate.providerId)}`] ?? provider.baseUrl;
+}
+
 function binding(candidate: CapabilityRuntimeCandidate, provider: ProviderConfig, auth: CapabilityRoleTarget["auth"], env: Record<string, string | undefined>, rank: number | null, score: number | null, reasons: CapabilityRoleTarget["reasons"], evidence: RankEvidence[], uncertainty: Uncertainty, advisories: RankAdvisoryProjection[], selection: CapabilityRoleTarget["selection"]): CapabilityRoleTarget {
-  const baseUrl = env[`DATUM_BASEURL_${envKey(candidate.providerId)}`] ?? provider.baseUrl;
+  const baseUrl = effectiveBaseUrl(candidate, provider, env);
   return { ...candidate, provider: candidate.providerId, kind: provider.kind, ...(baseUrl ? { baseUrl } : {}), auth, rank, score, reasons, evidence, uncertainty, advisories, selection };
 }
 function exclusion(candidate: CapabilityRuntimeCandidate, datumReasons: CapabilityRoleReason[], reasons: CapabilityRoleExclusion["reasons"] = [], evidence: RankEvidence[] = [], uncertainty: Uncertainty = fixedUncertainty(), advisories: RankAdvisoryProjection[] = []): CapabilityRoleExclusion {
   return { candidate, reasons, datumReasons, evidence, uncertainty, advisories };
 }
-function datumEligibility(candidate: CapabilityRuntimeCandidate, config: NonNullable<ReturnType<typeof loadConfig>["config"]>, policy: PolicyCapabilityRole | undefined, env: Record<string, string | undefined>, opts: CapabilityRoleResolveOptions): { provider?: ProviderConfig; auth?: CapabilityRoleTarget["auth"]; reasons: CapabilityRoleReason[] } {
-  const provider = config.providers?.[candidate.providerId];
+function isTrustedLocalCandidate(candidate: CapabilityRuntimeCandidate, provider: ProviderConfig, env: Record<string, string | undefined>): boolean {
+  if (candidate.locality !== "local") return false;
+  const baseUrl = effectiveBaseUrl(candidate, provider, env);
+  if (!baseUrl) return false;
+  try {
+    const parsed = new URL(baseUrl);
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && isLoopbackHost(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function providerAuth(candidate: CapabilityRuntimeCandidate, provider: ProviderConfig, context: ResolutionContext): AuthStatus {
+  const cached = context.authByProvider.get(candidate.providerId);
+  if (cached) return cached;
+  const auth = describeAuth(provider.auth, context.env, context.opts.secretRunner ?? defaultSecretRunner);
+  context.authByProvider.set(candidate.providerId, auth);
+  return auth;
+}
+
+function datumEligibility(candidate: CapabilityRuntimeCandidate, context: ResolutionContext): { provider?: ProviderConfig; auth?: CapabilityRoleTarget["auth"]; reasons: CapabilityRoleReason[] } {
+  const provider = ownValue(context.config.providers, candidate.providerId);
   if (!provider) return { reasons: ["DATUM_PROVIDER_MISSING"] };
   if (!provider.models.includes(candidate.providerModel)) return { reasons: ["DATUM_PROVIDER_MODEL_UNCONFIGURED"] };
-  if (policy?.policy.locality === "local-only" && candidate.locality !== "local") return { reasons: ["DATUM_LOCALITY_DISALLOWED"] };
-  const auth = describeAuth(provider.auth, env, opts.secretRunner ?? defaultSecretRunner);
+  if (context.policy?.policy.locality === "local-only" && !isTrustedLocalCandidate(candidate, provider, context.env)) return { reasons: ["DATUM_LOCALITY_DISALLOWED"] };
+  const auth = providerAuth(candidate, provider, context);
   if (!auth.available) return { reasons: ["DATUM_AUTH_UNAVAILABLE"] };
   return { provider, auth, reasons: [] };
 }
-function selectRef(ref: string, source: "session" | "env" | "durable" | "fallback", request: CapabilityRoleRequest, config: ReturnType<typeof loadConfig>["config"], policy: PolicyCapabilityRole | undefined, env: Record<string, string | undefined>, opts: CapabilityRoleResolveOptions): { target: CapabilityRoleTarget | null; exclusions: CapabilityRoleExclusion[]; diagnostics: CapabilityRoleResult["diagnostics"] } {
+function selectRef(ref: string, source: "session" | "env" | "durable" | "fallback", request: CapabilityRoleRequest, context: ResolutionContext): { target: CapabilityRoleTarget | null; exclusions: CapabilityRoleExclusion[]; diagnostics: CapabilityRoleResult["diagnostics"] } {
   let providerId: string;
   let providerModel: string;
   try {
-    const resolved = resolveConfiguredModelRef(config, ref);
+    const resolved = resolveConfiguredModelRef(context.config, ref);
     providerId = resolved.provider;
     providerModel = resolved.model;
   } catch (error) {
@@ -198,11 +252,11 @@ function selectRef(ref: string, source: "session" | "env" | "durable" | "fallbac
     const reason: CapabilityRoleReason = matches.length > 1 ? "DATUM_OVERRIDE_AMBIGUOUS" : "DATUM_OVERRIDE_NOT_IN_INVENTORY";
     return { target: null, exclusions: matches.map((candidate) => exclusion(candidate, [reason])), diagnostics: [{ code: reason, message: `${source} target is not exactly one caller inventory candidate.` }] };
   }
-  const eligibility = datumEligibility(matches[0], config, policy, env, opts);
+  const eligibility = datumEligibility(matches[0], context);
   if (!eligibility.provider || !eligibility.auth) return { target: null, exclusions: [exclusion(matches[0], eligibility.reasons)], diagnostics: [{ code: eligibility.reasons[0], message: `${source} target failed Datum eligibility checks.` }] };
   const reason = source === "session" ? "DATUM_FIXED_SESSION_OVERRIDE" : source === "env" ? "DATUM_FIXED_ENV_OVERRIDE" : source === "fallback" ? "DATUM_POLICY_FALLBACK" : "DATUM_FIXED_DURABLE";
   const posture = source === "fallback" ? "fallback" : source === "durable" ? "durable" : "override";
-  return { target: binding(matches[0], eligibility.provider, eligibility.auth, env, null, null, [], [], fixedUncertainty(), [], { posture, reason }), exclusions: [], diagnostics: [] };
+  return { target: binding(matches[0], eligibility.provider, eligibility.auth, context.env, null, null, [], [], fixedUncertainty(), [], { posture, reason }), exclusions: [], diagnostics: [] };
 }
 function catalogError(error: unknown): { code: string; message: string } {
   if (error instanceof DatumError) return { code: error.code, message: error.message };
@@ -213,6 +267,108 @@ function catalogAllowsFallback(error: unknown): boolean {
     && (error.code === "CAPABILITY_CATALOG_UNAVAILABLE" || error.code === "CAPABILITY_CATALOG_STALE");
 }
 
+function buildRankRequest(policy: PolicyCapabilityRole, request: CapabilityRoleRequest): RankRequestV2 {
+  const advisories = combinedAdvisories(policy.policy.advisories ?? [], request.advisories ?? [], request.inventory.length);
+  try {
+    return validateRankRequest({
+      schemaVersion: "bearing.rank.request/v2",
+      task: request.task,
+      inventory: request.inventory.map(({ id, model, execution }) => ({ id, model, execution })),
+      requirements: [...policy.policy.requirements, ...(request.requirements ?? [])],
+      preferences: [...policy.policy.preferences, ...(request.preferences ?? [])],
+      advisories,
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? ` ${error.message}` : "";
+    invalid(`combined durable and request capability criteria are not a valid Bearing rank request.${detail}`);
+  }
+}
+
+function loadCatalog(config: DatumConfig, opts: CapabilityRoleResolveOptions) {
+  return opts.catalog === undefined
+    ? loadCapabilityCatalog(opts)
+    : validateInjectedCapabilityCatalog(opts.catalog, {
+      maxAgeSeconds: config.capabilityCatalog?.maxAgeSeconds,
+      now: opts.now,
+    });
+}
+
+function fixedResult(request: CapabilityRoleRequest, context: ResolutionContext, ref: string, source: "session" | "env" | "durable"): CapabilityRoleResult {
+  bounded(ref, "capability role fixed target");
+  if (!MODEL_REF_RE.test(ref)) throw new DatumError("INVALID_CONFIG", "Capability role fixed targets must use model or model@provider.");
+  const selected = selectRef(ref, source, request, context);
+  const overrideSource = source === "durable" ? null : source;
+  return {
+    schemaVersion: "datum.capability-role.result/v1",
+    mode: "fixed",
+    posture: selected.target ? (overrideSource ? "override" : "durable") : "unavailable",
+    target: selected.target,
+    alternatives: [],
+    exclusions: selected.exclusions,
+    catalog: null,
+    evidence: [],
+    advisories: [],
+    uncertainty: selected.target?.uncertainty ?? null,
+    override: { active: overrideSource !== null, source: overrideSource, ...(overrideSource ? { ref } : {}) },
+    fallback: { configured: context.policy?.policy.fallback !== undefined, used: false, ...(context.policy?.policy.fallback ? { ref: context.policy.policy.fallback } : {}) },
+    diagnostics: selected.diagnostics,
+  };
+}
+
+function catalogFailureResult(error: unknown, request: CapabilityRoleRequest, context: ResolutionContext): CapabilityRoleResult {
+  const diagnostic = catalogError(error);
+  const fallback = context.policy?.policy.fallback;
+  const state = { configured: fallback !== undefined, used: false, ...(fallback ? { ref: fallback } : {}) };
+  if (fallback && catalogAllowsFallback(error)) {
+    const selected = selectRef(fallback, "fallback", request, context);
+    return {
+      schemaVersion: "datum.capability-role.result/v1", mode: "policy",
+      posture: selected.target ? "fallback" : "unavailable",
+      target: selected.target, alternatives: [], exclusions: selected.exclusions,
+      catalog: null, evidence: [], advisories: [],
+      uncertainty: selected.target?.uncertainty ?? null,
+      override: { active: false, source: null },
+      fallback: { ...state, used: selected.target !== null },
+      diagnostics: [diagnostic, ...selected.diagnostics],
+    };
+  }
+  return {
+    schemaVersion: "datum.capability-role.result/v1", mode: "policy", posture: "unavailable",
+    target: null, alternatives: [], exclusions: [], catalog: null,
+    evidence: [], advisories: [], uncertainty: null,
+    override: { active: false, source: null }, fallback: state, diagnostics: [diagnostic],
+  };
+}
+
+function rankedResult(request: CapabilityRoleRequest, context: ResolutionContext, loaded: ReturnType<typeof loadCatalog>, rankRequest: RankRequestV2): CapabilityRoleResult {
+  const rank = rankCatalog(loaded.catalog, rankRequest);
+  const byId = new Map(request.inventory.map((candidate) => [candidate.id, candidate]));
+  const exclusions = rank.excluded.map((entry: ExcludedCandidateV2) => exclusion(byId.get(entry.candidateId)!, [], entry.reasons, entry.evidence, entry.uncertainty, entry.advisories));
+  const eligible: CapabilityRoleTarget[] = [];
+  for (const entry of rank.ranked as RankedCandidateV2[]) {
+    const candidate = byId.get(entry.candidateId)!;
+    const checked = datumEligibility(candidate, context);
+    if (!checked.provider || !checked.auth) {
+      exclusions.push(exclusion(candidate, checked.reasons, [], entry.evidence, entry.uncertainty, entry.advisories));
+      continue;
+    }
+    eligible.push(binding(candidate, checked.provider, checked.auth, context.env, entry.rank, entry.score, entry.reasons, entry.evidence, entry.uncertainty, entry.advisories, { posture: "durable", reason: "DATUM_POLICY_RANKED" }));
+  }
+  const [target, ...alternatives] = eligible;
+  const fallback = context.policy?.policy.fallback;
+  return {
+    schemaVersion: "datum.capability-role.result/v1", mode: "policy",
+    posture: target ? "durable" : "unavailable",
+    target: target ?? null, alternatives, exclusions,
+    catalog: { digest: rank.catalog.digest, asOf: rank.catalog.asOf, metadata: loaded.metadata },
+    evidence: target?.evidence ?? [], advisories: target?.advisories ?? [],
+    uncertainty: target?.uncertainty ?? null,
+    override: { active: false, source: null },
+    fallback: { configured: fallback !== undefined, used: false, ...(fallback ? { ref: fallback } : {}) },
+    diagnostics: target ? [] : [{ code: "DATUM_NO_ELIGIBLE_TARGET", message: "No Bearing-ranked inventory candidate passed Datum eligibility checks." }],
+  };
+}
+
 /**
  * Resolve a fixed or policy role without network access or secret materialization.
  * Bearing v2 supplies rankings, evidence, and caller-declared advisory projections for policy roles.
@@ -220,63 +376,23 @@ function catalogAllowsFallback(error: unknown): boolean {
 export function resolveCapabilityRole(role: string, request: CapabilityRoleRequest, opts: CapabilityRoleResolveOptions = {}): CapabilityRoleResult {
   request = validateRequest(request);
   const { config } = loadConfig(opts);
-  const durable = config.roles?.[role];
+  const durable = ownValue(config.roles, role);
   if (durable === undefined) throw new DatumError("UNKNOWN_ROLE", `Unknown role "${role}".`);
   const env = effectiveEnv(opts);
-  const session = request.fixedOverride;
-  const environment = env[`DATUM_ROLE_${envKey(role)}`];
   const policy = policyRole(durable) ? durable : undefined;
-  const fixed = session ?? environment ?? (typeof durable === "string" ? durable : undefined);
-  const overrideSource = session ? "session" : environment ? "env" : null;
-  const fallbackState = { configured: policy?.policy.fallback !== undefined, used: false, ...(policy?.policy.fallback ? { ref: policy.policy.fallback } : {}) };
-  if (fixed !== undefined) {
-    bounded(fixed, "capability role fixed target");
-    if (!MODEL_REF_RE.test(fixed)) throw new DatumError("INVALID_CONFIG", "Capability role fixed targets must use model or model@provider.");
-    const selected = selectRef(fixed, session ? "session" : environment ? "env" : "durable", request, config, policy, env, opts);
-    return { schemaVersion: "datum.capability-role.result/v1", mode: "fixed", posture: selected.target ? (overrideSource ? "override" : "durable") : "unavailable", target: selected.target, alternatives: [], exclusions: selected.exclusions, catalog: null, evidence: [], advisories: [], uncertainty: selected.target?.uncertainty ?? null, override: { active: overrideSource !== null, source: overrideSource, ...(overrideSource ? { ref: fixed } : {}) }, fallback: fallbackState, diagnostics: selected.diagnostics };
-  }
+  const context: ResolutionContext = { config, policy, env, opts, authByProvider: new Map() };
+  if (request.fixedOverride !== undefined) return fixedResult(request, context, request.fixedOverride, "session");
+  const environment = env[`DATUM_ROLE_${envKey(role)}`];
+  if (environment !== undefined) return fixedResult(request, context, environment, "env");
+  if (typeof durable === "string") return fixedResult(request, context, durable, "durable");
+  if (!policy) invalid(`Role "${role}" is not a valid capability policy.`);
 
-  let loaded;
+  const rankRequest = buildRankRequest(policy, request);
+  let loaded: ReturnType<typeof loadCatalog>;
   try {
-    loaded = opts.catalog === undefined
-      ? loadCapabilityCatalog(opts)
-      : validateInjectedCapabilityCatalog(opts.catalog, {
-        maxAgeSeconds: config.capabilityCatalog?.maxAgeSeconds,
-        now: opts.now,
-      });
+    loaded = loadCatalog(config, opts);
   } catch (error) {
-    const diagnostic = catalogError(error);
-    if (policy?.policy.fallback && catalogAllowsFallback(error)) {
-      const selected = selectRef(policy.policy.fallback, "fallback", request, config, policy, env, opts);
-      return { schemaVersion: "datum.capability-role.result/v1", mode: "policy", posture: selected.target ? "fallback" : "unavailable", target: selected.target, alternatives: [], exclusions: selected.exclusions, catalog: null, evidence: [], advisories: [], uncertainty: selected.target?.uncertainty ?? null, override: { active: false, source: null }, fallback: { ...fallbackState, used: selected.target !== null }, diagnostics: [diagnostic, ...selected.diagnostics] };
-    }
-    return { schemaVersion: "datum.capability-role.result/v1", mode: "policy", posture: "unavailable", target: null, alternatives: [], exclusions: [], catalog: null, evidence: [], advisories: [], uncertainty: null, override: { active: false, source: null }, fallback: fallbackState, diagnostics: [diagnostic] };
+    return catalogFailureResult(error, request, context);
   }
-  const advisories = combinedAdvisories(policy!.policy.advisories ?? [], request.advisories ?? [], request.inventory.length);
-  let rankRequest: RankRequestV2;
-  try {
-    rankRequest = validateRankRequest({
-      schemaVersion: "bearing.rank.request/v2",
-      task: request.task,
-      inventory: request.inventory.map(({ id, model, execution }) => ({ id, model, execution })),
-      requirements: [...policy!.policy.requirements, ...(request.requirements ?? [])],
-      preferences: [...policy!.policy.preferences, ...(request.preferences ?? [])],
-      advisories,
-    });
-  } catch (error) {
-    const detail = error instanceof Error ? ` ${error.message}` : "";
-    invalid(`combined durable and request capability criteria are not a valid Bearing rank request.${detail}`);
-  }
-  const rank = rankCatalog(loaded.catalog, rankRequest);
-  const byId = new Map(request.inventory.map((candidate) => [candidate.id, candidate]));
-  const exclusions: CapabilityRoleExclusion[] = rank.excluded.map((entry: ExcludedCandidateV2) => exclusion(byId.get(entry.candidateId)!, [], entry.reasons, entry.evidence, entry.uncertainty, entry.advisories));
-  const eligible: CapabilityRoleTarget[] = [];
-  for (const entry of rank.ranked as RankedCandidateV2[]) {
-    const candidate = byId.get(entry.candidateId)!;
-    const checked = datumEligibility(candidate, config, policy, env, opts);
-    if (!checked.provider || !checked.auth) { exclusions.push(exclusion(candidate, checked.reasons, [], entry.evidence, entry.uncertainty, entry.advisories)); continue; }
-    eligible.push(binding(candidate, checked.provider, checked.auth, env, entry.rank, entry.score, entry.reasons, entry.evidence, entry.uncertainty, entry.advisories, { posture: "durable", reason: "DATUM_POLICY_RANKED" }));
-  }
-  const [target, ...alternatives] = eligible;
-  return { schemaVersion: "datum.capability-role.result/v1", mode: "policy", posture: target ? "durable" : "unavailable", target: target ?? null, alternatives, exclusions, catalog: { digest: rank.catalog.digest, asOf: rank.catalog.asOf, metadata: loaded.metadata }, evidence: target?.evidence ?? [], advisories: target?.advisories ?? [], uncertainty: target?.uncertainty ?? null, override: { active: false, source: null }, fallback: fallbackState, diagnostics: target ? [] : [{ code: "DATUM_NO_ELIGIBLE_TARGET", message: "No Bearing-ranked inventory candidate passed Datum eligibility checks." }] };
+  return rankedResult(request, context, loaded, rankRequest);
 }

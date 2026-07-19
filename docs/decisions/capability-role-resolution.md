@@ -15,7 +15,10 @@ offline, inventory-bounded selection. Callers supply launchable candidate
 bindings; Datum never discovers or invents candidates. Bearing ranks the full
 caller inventory against the durable plus additive policy rules. Datum then
 enforces its own provider configuration, model membership, secret-backend
-availability without materialization, and locality policy.
+availability without materialization, and locality policy. A caller's local
+label is treated as a claim: `local-only` additionally requires the provider's
+effective configured base URL to identify a loopback endpoint. Missing or
+non-loopback routes are not accepted as evidence of local execution.
 
 Session fixed overrides, then `DATUM_ROLE_<NAME>`, then durable fixed refs are
 authoritative only when they identify exactly one inventory candidate that

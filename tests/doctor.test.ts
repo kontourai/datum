@@ -97,6 +97,19 @@ test("doctor --probe: injected fetch, anthropic-compatible probed, key materiali
   assert.ok(probes.every((p) => p.status === "pass"));
 });
 
+test("doctor --probe: provider ids that collide with policy roles still probe the provider", async () => {
+  const report = await runDoctor({
+    config: {
+      providers: { planner: { kind: "openai-compatible", baseUrl: "https://proxy.example/v1", auth: { env: "PLANNER_KEY" }, models: ["worker-model"] } },
+      roles: { planner: { policy: { requirements: [], preferences: [], locality: "remote-allowed" } } },
+    },
+    env: { PLANNER_KEY: "k" },
+    probe: true,
+    fetchImpl: okFetch,
+  });
+  assert.equal(report.checks.find((check) => check.name === "probe planner")?.status, "pass");
+});
+
 test("doctor --probe: unknown kind is skipped, not failed", async () => {
   const report = await runDoctor({
     config: { providers: { weird: { kind: "mystery-kind", auth: { env: "W_KEY" }, models: ["m"] } } },

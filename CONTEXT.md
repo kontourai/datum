@@ -80,7 +80,10 @@ all are explicit, opt-in commands.
   provider/model and a concrete Bearing model/execution profile. Datum passes
   the complete inventory to Bearing first, retains Bearing exclusions/evidence/
   uncertainty/advisory projections, and then enforces configured provider-model membership,
-  non-materializing auth availability, and locality. Overrides and fallback
+  non-materializing auth availability, and locality. Caller-declared local
+  candidates satisfy `local-only` only when the provider's effective configured
+  base URL is also a loopback endpoint; an absent or remote route is not proven
+  local. Overrides and fallback
   never escape that inventory. Resolution loads only a local snapshot or remote
   cache and never fetches. Datum uses Bearing rank v2 for policy/request-declared
   generic advisories and passes each candidate's projections through unchanged;

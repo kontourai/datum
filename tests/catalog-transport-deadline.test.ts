@@ -123,7 +123,6 @@ test("304 body cleanup remains inside the injected transport deadline", async ()
       cwd: t.cwd,
       home: t.home,
       cacheRoot: `${t.dir}/cache`,
-      requestTimeoutMs: 20,
       transport: async (_url: string, init: { signal?: AbortSignal }) => {
         call += 1;
         if (call === 1) return new Response(serializeCatalog(snapshot), { status: 200 });
@@ -140,8 +139,10 @@ test("304 body cleanup remains inside the injected transport deadline", async ()
         };
       },
     };
-    await refreshCapabilityCatalog(options);
-    const fallback = await refreshCapabilityCatalog(options);
+    // Seed under a generous deadline so concurrent test-runner load cannot make
+    // setup fail before this case reaches the stalled 304 cleanup it exercises.
+    await refreshCapabilityCatalog({ ...options, requestTimeoutMs: 2_000 });
+    const fallback = await refreshCapabilityCatalog({ ...options, requestTimeoutMs: 20 });
     assert.equal(fallback.metadata.fallback, true);
     assert.equal(fallback.metadata.diagnostics[0]?.code, "CAPABILITY_CATALOG_UNAVAILABLE");
     assert.equal(aborted, true);

@@ -101,7 +101,11 @@ opaque candidate id to its Datum provider id, provider model id, locality,
 and concrete Bearing model identity/execution profile. Session fixed overrides,
 then `DATUM_ROLE_<NAME>`, then a durable fixed role take precedence and bypass
 Bearing ranking, but still must match exactly one supplied candidate and pass
-Datum checks. A policy fallback is considered only for missing/stale catalog
+Datum checks. Request locality is a caller claim, not sufficient evidence by
+itself: `local-only` also requires the provider's effective configured base URL,
+including `DATUM_BASEURL_<PROVIDER>`, to name a loopback endpoint. Providers
+without an explicit loopback route cannot be proven local. A policy fallback is
+considered only for missing/stale catalog
 state and is subject to the same inventory boundary. Results include catalog
 provenance, evidence, uncertainty, exclusions, and explicit override/fallback
 state; they never materialize secrets or fetch a catalog. Policy and request

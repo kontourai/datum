@@ -4,7 +4,7 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { compileCatalog, serializeCatalog, type ExecutionProfile, type ObservationInput } from "@kontourai/bearing";
 import { refreshCapabilityCatalog, resolveCapabilityRole, validateConfig, type CapabilityRole, type CapabilityRoleRequest, type CapabilityRoleResolveOptions } from "../src/index.js";
-import { tempTree } from "./helpers.js";
+import { fakeRunner, tempTree } from "./helpers.js";
 
 const execution: ExecutionProfile = {
   runtime: { id: "llama.cpp", version: "1" },
@@ -53,7 +53,7 @@ function options(role: CapabilityRole, extra: Record<string, unknown> = {}): Cap
     config: {
       providers: {
         cloud: { kind: "openai-compatible", auth: { env: "CLOUD_KEY" }, models: ["remote", "missing"] },
-        local: { kind: "openai-compatible", auth: { env: "LOCAL_KEY" }, models: ["local"] },
+        local: { kind: "openai-compatible", baseUrl: "http://127.0.0.1:11434", auth: { env: "LOCAL_KEY" }, models: ["local"] },
       },
       roles: { chat: role },
       ...extra,
@@ -75,6 +75,22 @@ test("resolveCapabilityRole: local-only policy filters a higher-ranked remote in
 
   assert.equal(result.target?.id, "local");
   assert.ok(result.exclusions.some((entry) => entry.candidate.id === "remote" && entry.datumReasons.includes("DATUM_LOCALITY_DISALLOWED")));
+});
+
+test("resolveCapabilityRole: local-only requires both caller locality and a configured loopback endpoint", () => {
+  const policy = { policy: { requirements: [], preferences: [{ measurementKey: "quality", aggregation: "fact" as const, direction: "maximize" as const, weight: 1 }], locality: "local-only" as const } };
+  const spoofed = resolveCapabilityRole("chat", request({
+    task: { family: "chat", suite: null },
+    inventory: [candidate("remote", "cloud", "remote", "local"), candidate("local", "local", "local", "local")],
+  }), options(policy));
+  assert.equal(spoofed.target?.id, "local");
+  assert.ok(spoofed.exclusions.some((entry) => entry.candidate.id === "remote" && entry.datumReasons.includes("DATUM_LOCALITY_DISALLOWED")));
+
+  const overridden = resolveCapabilityRole("chat", request({
+    task: { family: "chat", suite: null }, inventory: [candidate("local", "local", "local", "local")],
+  }), { ...options(policy), env: { LOCAL_KEY: "present", DATUM_BASEURL_LOCAL: "https://remote.example/v1" } });
+  assert.equal(overridden.target, null);
+  assert.ok(overridden.exclusions[0].datumReasons.includes("DATUM_LOCALITY_DISALLOWED"));
 });
 
 test("resolveCapabilityRole: remote-allowed policy can select the top remote candidate", () => {
@@ -237,6 +253,39 @@ test("resolveCapabilityRole: Datum skips a ranked candidate with unavailable aut
   assert.ok(result.exclusions.some((entry) => entry.candidate.id === "remote" && entry.datumReasons.includes("DATUM_AUTH_UNAVAILABLE")));
 });
 
+test("resolveCapabilityRole: auth availability is evaluated once per configured provider", () => {
+  const runner = fakeRunner({ op: true });
+  const role = { policy: { requirements: [], preferences: [], locality: "remote-allowed" as const } };
+  const configured = options(role, {
+    providers: {
+      shared: { kind: "openai-compatible", auth: { op: "op://vault/item/key" }, models: ["remote", "local"] },
+    },
+  });
+  configured.secretRunner = runner;
+  const result = resolveCapabilityRole("chat", request({
+    task: { family: "chat", suite: null },
+    inventory: [candidate("remote", "shared", "remote", "remote"), candidate("local", "shared", "local", "remote")],
+  }), configured);
+  assert.ok(result.target);
+  assert.equal(runner.calls.filter((call) => call === "opAvailable").length, 1);
+});
+
+test("resolveCapabilityRole: inherited role and provider names are never treated as configuration", () => {
+  const role = { policy: { requirements: [], preferences: [], locality: "remote-allowed" as const } };
+  const input = request({ task: { family: "chat", suite: null }, inventory: [candidate("local", "local", "local", "local")] });
+  assert.throws(
+    () => resolveCapabilityRole("constructor", input, options(role)),
+    (error: unknown) => (error as { code?: string }).code === "UNKNOWN_ROLE",
+  );
+
+  const result = resolveCapabilityRole("chat", request({
+    task: { family: "chat", suite: null },
+    inventory: [candidate("remote", "constructor", "remote", "remote"), candidate("local", "local", "local", "local")],
+  }), options(role));
+  assert.equal(result.target?.id, "local");
+  assert.ok(result.exclusions.some((entry) => entry.candidate.providerId === "constructor" && entry.datumReasons.includes("DATUM_PROVIDER_MISSING")));
+});
+
 test("resolveCapabilityRole: Datum independently enforces provider and provider-model inventory bindings", () => {
   const role = { policy: { requirements: [], preferences: [{ measurementKey: "quality", aggregation: "fact" as const, direction: "maximize" as const, weight: 1 }], locality: "remote-allowed" as const } };
   const cases = [
@@ -360,6 +409,23 @@ test("resolveCapabilityRole: missing or stale catalog uses only explicit invento
   } finally { t.cleanup(); }
 });
 
+test("resolveCapabilityRole: combined policy validation precedes missing-catalog fallback", () => {
+  const policy = { policy: {
+    requirements: [], preferences: [], locality: "local-only" as const, fallback: "local@local",
+    advisories: [{ id: "same", measurementKey: "quality", aggregation: "fact" as const }],
+  } };
+  const base = options(policy);
+  assert.throws(
+    () => resolveCapabilityRole("chat", request({
+      task: { family: "chat", suite: null },
+      inventory: [candidate("local", "local", "local", "local")],
+      advisories: [{ id: "same", measurementKey: "context.projection", aggregation: "fact" }],
+    }), { ...base, catalog: undefined, config: { ...base.config!, capabilityCatalog: { localPath: "missing.json" } } }),
+    (error: unknown) => (error as { code?: string; message?: string }).code === "INVALID_CONFIG"
+      && (error as { message: string }).message.includes('duplicate id "same"'),
+  );
+});
+
 test("resolveCapabilityRole: result ordering is deterministic and config policy runtime validation rejects unknown keys", () => {
   const role = { policy: { requirements: [], preferences: [], locality: "remote-allowed" as const } };
   const rankedRequest = request({ task: { family: "chat", suite: null }, inventory: [candidate("local", "local", "local", "local"), candidate("remote", "cloud", "remote", "remote")] });
@@ -443,6 +509,31 @@ test("resolveCapabilityRole: injected catalogs are validated, freshness-checked,
   const inherited = resolveCapabilityRole("chat", input, { ...base, catalog: inheritedCatalog });
   assert.equal(inherited.posture, "unavailable");
   assert.equal(inherited.diagnostics[0]?.code, "CAPABILITY_CATALOG_MALFORMED");
+
+  const invalidDiagnostic = {
+    ...base.catalog!,
+    metadata: {
+      ...base.catalog!.metadata,
+      diagnostics: [{ code: "NOT_A_DATUM_CODE", message: "invalid" }],
+    },
+  };
+  const rejectedDiagnostic = resolveCapabilityRole("chat", input, {
+    ...base,
+    catalog: invalidDiagnostic as CapabilityRoleResolveOptions["catalog"],
+  });
+  assert.equal(rejectedDiagnostic.posture, "unavailable");
+  assert.equal(rejectedDiagnostic.diagnostics[0]?.code, "CAPABILITY_CATALOG_MALFORMED");
+
+  const invalidFetchedAt = {
+    ...base.catalog!,
+    metadata: { ...base.catalog!.metadata, fetchedAt: "not-a-date" },
+  };
+  const rejectedFetchedAt = resolveCapabilityRole("chat", input, {
+    ...base,
+    catalog: invalidFetchedAt,
+  });
+  assert.equal(rejectedFetchedAt.posture, "unavailable");
+  assert.equal(rejectedFetchedAt.diagnostics[0]?.code, "CAPABILITY_CATALOG_MALFORMED");
 });
 
 test("resolveCapabilityRole: embedded requests bound nested execution complexity", () => {
