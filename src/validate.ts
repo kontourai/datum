@@ -172,6 +172,49 @@ function validateProvider(providerId: string, p: unknown): void {
   }
 }
 
+function validateCatalogRemoteUrl(value: unknown): void {
+  if (typeof value !== "string" || value.length === 0) {
+    invalid('config: capabilityCatalog.remoteUrl must be a non-empty URL string.');
+  }
+  if (!/^[Hh][Tt][Tt][Pp][Ss]?:\/\/[^/?#@\s]+(?:\/[^?#\s]*)?$/.test(value)) {
+    invalid(
+      "config: capabilityCatalog.remoteUrl must be a canonical credential-free http(s) URL " +
+        "without whitespace, query parameters, or a fragment.",
+    );
+  }
+  let remoteUrl: URL;
+  try {
+    remoteUrl = new URL(value);
+  } catch {
+    invalid("config: capabilityCatalog.remoteUrl is not a valid URL.");
+  }
+  if (remoteUrl.protocol !== "https:" && remoteUrl.protocol !== "http:") {
+    invalid("config: capabilityCatalog.remoteUrl must use https (or loopback http for local services).");
+  }
+  if (remoteUrl.username || remoteUrl.password || remoteUrl.search || remoteUrl.hash) {
+    invalid(
+      "config: capabilityCatalog.remoteUrl must not embed userinfo, query parameters, or a fragment; " +
+        "configure a credential-free snapshot endpoint.",
+    );
+  }
+}
+
+function validateCatalogLocalPath(value: unknown): void {
+  if (typeof value !== "string" || value.length === 0) {
+    invalid('config: capabilityCatalog.localPath must be a non-empty path string.');
+  }
+  const segments = value.split(/[\\/]+/);
+  if (path.isAbsolute(value) || segments.includes("..")) {
+    invalid('config: capabilityCatalog.localPath must be a repository-relative path without ".." traversal.');
+  }
+}
+
+function validateCatalogMaxAge(value: unknown): void {
+  if (value !== undefined && (typeof value !== "number" || !Number.isFinite(value) || value <= 0)) {
+    invalid('config: capabilityCatalog.maxAgeSeconds must be a positive number when present.');
+  }
+}
+
 function validateCapabilityCatalog(value: unknown): CapabilityCatalogConfig {
   if (!isRecord(value)) invalid('config: "capabilityCatalog" must be an object.');
   const catalog = value as Record<string, unknown>;
@@ -184,47 +227,9 @@ function validateCapabilityCatalog(value: unknown): CapabilityCatalogConfig {
   if (hasRemote === hasLocal) {
     invalid('config: capabilityCatalog must contain exactly one of "remoteUrl" or "localPath".');
   }
-  if (hasRemote) {
-    if (typeof catalog.remoteUrl !== "string" || catalog.remoteUrl.length === 0) {
-      invalid('config: capabilityCatalog.remoteUrl must be a non-empty URL string.');
-    }
-    if (!/^[Hh][Tt][Tt][Pp][Ss]?:\/\/[^/?#@\s]+(?:\/[^?#\s]*)?$/.test(catalog.remoteUrl)) {
-      invalid(
-        "config: capabilityCatalog.remoteUrl must be a canonical credential-free http(s) URL " +
-          "without whitespace, query parameters, or a fragment.",
-      );
-    }
-    let remoteUrl: URL;
-    try {
-      remoteUrl = new URL(catalog.remoteUrl);
-    } catch {
-      invalid("config: capabilityCatalog.remoteUrl is not a valid URL.");
-    }
-    if (remoteUrl.protocol !== "https:" && remoteUrl.protocol !== "http:") {
-      invalid("config: capabilityCatalog.remoteUrl must use https (or loopback http for local services).");
-    }
-    if (remoteUrl.username || remoteUrl.password || remoteUrl.search || remoteUrl.hash) {
-      invalid(
-        "config: capabilityCatalog.remoteUrl must not embed userinfo, query parameters, or a fragment; " +
-          "configure a credential-free snapshot endpoint.",
-      );
-    }
-  }
-  if (hasLocal) {
-    if (typeof catalog.localPath !== "string" || catalog.localPath.length === 0) {
-      invalid('config: capabilityCatalog.localPath must be a non-empty path string.');
-    }
-    const segments = catalog.localPath.split(/[\\/]+/);
-    if (path.isAbsolute(catalog.localPath) || segments.includes("..")) {
-      invalid('config: capabilityCatalog.localPath must be a repository-relative path without ".." traversal.');
-    }
-  }
-  if (
-    catalog.maxAgeSeconds !== undefined &&
-    (typeof catalog.maxAgeSeconds !== "number" || !Number.isFinite(catalog.maxAgeSeconds) || catalog.maxAgeSeconds <= 0)
-  ) {
-    invalid('config: capabilityCatalog.maxAgeSeconds must be a positive number when present.');
-  }
+  if (hasRemote) validateCatalogRemoteUrl(catalog.remoteUrl);
+  if (hasLocal) validateCatalogLocalPath(catalog.localPath);
+  validateCatalogMaxAge(catalog.maxAgeSeconds);
   return catalog as CapabilityCatalogConfig;
 }
 

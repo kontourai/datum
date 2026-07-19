@@ -72,6 +72,63 @@ test("catalog transport: resolved private addresses are blocked before fetch", a
   }
 });
 
+test("catalog transport: IANA special-purpose IPv6 ranges are blocked before fetch", async () => {
+  for (const address of [
+    "2001:2::1",
+    "2001:10::1",
+    "2001:20::1",
+    "2002:7f00:1::",
+    "2620:4f:8000::1",
+    "3fff::1",
+  ]) {
+    const t = tempTree();
+    try {
+      t.writeRepo(config());
+      let calls = 0;
+      await rejectsCode(
+        () => refreshCapabilityCatalog({
+          cwd: t.cwd,
+          home: t.home,
+          cacheRoot: path.join(t.dir, "cache"),
+          now: clock,
+          resolveHost: async () => [address],
+          transport: async () => {
+            calls += 1;
+            return new Response(serializeCatalog(catalog()), { status: 200 });
+          },
+        }),
+        "CAPABILITY_CATALOG_INSECURE_URL",
+      );
+      assert.equal(calls, 0, address);
+    } finally {
+      t.cleanup();
+    }
+  }
+});
+
+test("catalog transport: globally routable IPv6 remains eligible", async () => {
+  const t = tempTree();
+  try {
+    t.writeRepo(config());
+    let calls = 0;
+    const result = await refreshCapabilityCatalog({
+      cwd: t.cwd,
+      home: t.home,
+      cacheRoot: path.join(t.dir, "cache"),
+      now: clock,
+      resolveHost: async () => ["2606:4700:4700::1111"],
+      transport: async () => {
+        calls += 1;
+        return new Response(serializeCatalog(catalog()), { status: 200 });
+      },
+    });
+    assert.equal(calls, 1);
+    assert.equal(result.catalog.digest, catalog().digest);
+  } finally {
+    t.cleanup();
+  }
+});
+
 test("catalog transport: an explicitly local source may resolve only to loopback addresses", async () => {
   const t = tempTree();
   try {

@@ -1,7 +1,7 @@
 import { lookup } from "node:dns/promises";
-import { request as requestHttp } from "node:http";
+import { request as requestHttp, type IncomingHttpHeaders, type IncomingMessage } from "node:http";
 import { request as requestHttps } from "node:https";
-import { isIP, type LookupFunction } from "node:net";
+import { BlockList, isIP, type LookupFunction } from "node:net";
 import { Readable } from "node:stream";
 import { enforceHttpsPolicy, isLoopbackHost, safeFetch } from "../security.js";
 import { DEFAULT_CATALOG_REQUEST_TIMEOUT_MS } from "./limits.js";
@@ -121,6 +121,17 @@ function ipv4Number(address: string): number {
   return address.split(".").reduce((value, octet) => ((value << 8) | Number(octet)) >>> 0, 0);
 }
 
+const SPECIAL_PURPOSE_IPV6 = new BlockList();
+for (const [network, prefix] of [
+  ["2001::", 23],
+  ["2001:db8::", 32],
+  ["2002::", 16],
+  ["2620:4f:8000::", 48],
+  ["3fff::", 20],
+] as const) {
+  SPECIAL_PURPOSE_IPV6.addSubnet(network, prefix, "ipv6");
+}
+
 function isPublicAddress(address: string): boolean {
   const host = bareHostname(address).toLowerCase();
   if (isIP(host) === 4) {
@@ -137,13 +148,8 @@ function isPublicAddress(address: string): boolean {
     });
   }
   if (isIP(host) === 6) {
-    if (host.startsWith("::ffff:")) {
-      const mapped = host.slice("::ffff:".length);
-      return isIP(mapped) === 4 && isPublicAddress(mapped);
-    }
-    if (host === "::" || host === "::1" || host.startsWith("2001:db8:")) return false;
     const first = Number.parseInt(host.split(":", 1)[0] || "0", 16);
-    return first >= 0x2000 && first <= 0x3fff;
+    return first >= 0x2000 && first <= 0x3fff && !SPECIAL_PURPOSE_IPV6.check(host, "ipv6");
   }
   return false;
 }
@@ -198,6 +204,43 @@ async function assertCatalogRequestTarget(
   return { addresses: resolved };
 }
 
+function createPinnedLookup(target: ResolvedCatalogTarget): LookupFunction {
+  return (_hostname, options, callback) => {
+    if (options.all) {
+      callback(null, target.addresses);
+      return;
+    }
+    const selected = target.addresses[0];
+    callback(null, selected.address, selected.family);
+  };
+}
+
+function responseHeaders(headers: IncomingHttpHeaders): CatalogFetchResponse["headers"] {
+  return {
+    get(name: string): string | null {
+      const value = headers[name.toLowerCase()];
+      if (value === undefined) return null;
+      return Array.isArray(value) ? value.join(", ") : value;
+    },
+  };
+}
+
+function catalogFetchResponse(incoming: IncomingMessage): CatalogFetchResponse {
+  const body = Readable.toWeb(incoming) as ReadableStream<Uint8Array>;
+  return {
+    status: incoming.statusCode ?? 0,
+    headers: responseHeaders(incoming.headers),
+    body,
+    text: () => new Response(body).text(),
+  };
+}
+
+function bindResponseDeadline(incoming: IncomingMessage, clearDeadline: () => void): void {
+  incoming.once("end", clearDeadline);
+  incoming.once("close", clearDeadline);
+  incoming.once("error", clearDeadline);
+}
+
 function pinnedCatalogFetch(
   requestUrl: string,
   init: CatalogFetchInit,
@@ -206,14 +249,6 @@ function pinnedCatalogFetch(
 ): Promise<CatalogFetchResponse> {
   const url = new URL(requestUrl);
   const request = url.protocol === "https:" ? requestHttps : requestHttp;
-  const pinnedLookup: LookupFunction = (_hostname, options, callback) => {
-    if (options.all) {
-      callback(null, target.addresses);
-      return;
-    }
-    const selected = target.addresses[0];
-    callback(null, selected.address, selected.family);
-  };
   return new Promise((resolvePromise, rejectPromise) => {
     let settled = false;
     const outgoing = request(
@@ -221,26 +256,12 @@ function pinnedCatalogFetch(
       {
         method: "GET",
         headers: init.headers,
-        lookup: pinnedLookup,
+        lookup: createPinnedLookup(target),
       },
       (incoming) => {
         settled = true;
-        incoming.once("end", clearDeadline);
-        incoming.once("close", clearDeadline);
-        incoming.once("error", clearDeadline);
-        const body = Readable.toWeb(incoming) as ReadableStream<Uint8Array>;
-        resolvePromise({
-          status: incoming.statusCode ?? 0,
-          headers: {
-            get(name: string): string | null {
-              const value = incoming.headers[name.toLowerCase()];
-              if (value === undefined) return null;
-              return Array.isArray(value) ? value.join(", ") : value;
-            },
-          },
-          body,
-          text: () => new Response(body).text(),
-        });
+        bindResponseDeadline(incoming, clearDeadline);
+        resolvePromise(catalogFetchResponse(incoming));
       },
     );
     const timeout = setTimeout(() => {

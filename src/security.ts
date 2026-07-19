@@ -143,6 +143,14 @@ export interface SafeFetchResult<R> {
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const DEFAULT_MAX_REDIRECTS = 5;
 
+function releaseRedirectBody(response: PolicyCheckedResponse): void {
+  try {
+    void response.body?.cancel().catch(() => {});
+  } catch {
+    // Cleanup is best effort; redirect policy must not depend on stream behavior.
+  }
+}
+
 /**
  * Issue a request through the HTTPS policy, following redirects MANUALLY so the
  * policy is re-checked before the key-bearing request is re-sent to each hop.
@@ -191,7 +199,7 @@ export async function safeFetch<I extends { redirect?: "manual" }, R extends Pol
       return warning === undefined ? { blocked: false, response: res } : { blocked: false, response: res, warning };
     }
 
-    await res.body?.cancel();
+    releaseRedirectBody(res);
 
     if (hop >= maxRedirects) {
       throw new Error(`too many redirects (>${maxRedirects}) starting from ${url}`);
