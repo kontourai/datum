@@ -1,7 +1,6 @@
 /** Offline, inventory-bounded capability-role resolution. */
 import {
   MAX_RANK_V2_ADVISORIES,
-  MAX_RANK_V2_ADVISORY_CELLS,
   rankCatalog,
   validateExecutionProfile,
   validateModelIdentity,
@@ -132,14 +131,10 @@ function isRankableCandidate(candidate: CapabilityRuntimeCandidate): candidate i
 function combinedAdvisories(
   durable: RankAdvisoryRequest[],
   requested: RankAdvisoryRequest[],
-  inventorySize: number,
 ): RankAdvisoryRequest[] {
   const combined = [...durable, ...requested];
   if (combined.length > MAX_RANK_V2_ADVISORIES) {
     invalid(`combined durable and request advisories must contain at most ${MAX_RANK_V2_ADVISORIES} entries.`);
-  }
-  if (combined.length * inventorySize > MAX_RANK_V2_ADVISORY_CELLS) {
-    invalid(`combined durable and request advisories must produce at most ${MAX_RANK_V2_ADVISORY_CELLS} inventory projection cells.`);
   }
   const ids = new Set<string>();
   for (const advisory of combined) {
@@ -366,7 +361,7 @@ function catalogAllowsFallback(error: unknown): boolean {
 }
 
 function buildRankRequest(policy: PolicyCapabilityRole, request: CapabilityRoleRequest): RankRequestV2 {
-  const advisories = combinedAdvisories(policy.policy.advisories ?? [], request.advisories ?? [], request.inventory.length);
+  const advisories = combinedAdvisories(policy.policy.advisories ?? [], request.advisories ?? []);
   try {
     return validateRankRequest({
       schemaVersion: "bearing.rank.request/v2",
@@ -470,7 +465,7 @@ function rankedResult(request: CapabilityRoleRequest, context: ResolutionContext
     }
     eligible.push(binding(candidate, checked.provider, checked.auth, context.env, entry.rank, entry.score, entry.reasons, entry.evidence, entry.uncertainty, entry.advisories, { posture: "durable", reason: "DATUM_POLICY_RANKED" }));
   }
-  exclusions.sort((a, b) => a.candidate.id.localeCompare(b.candidate.id));
+  exclusions.sort((a, b) => a.candidate.id < b.candidate.id ? -1 : a.candidate.id > b.candidate.id ? 1 : 0);
   const [target, ...alternatives] = eligible;
   const fallback = context.policy?.policy.fallback;
   return {

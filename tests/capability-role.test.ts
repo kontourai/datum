@@ -162,6 +162,55 @@ test("resolveCapabilityRole: preserves Station-shaped unknown execution without 
   assert.deepEqual(unknown.uncertainty.gaps, ["runtime is unknown", "tool surface is unknown"]);
 });
 
+test("resolveCapabilityRole: preserves all runtime and tool-surface completeness states", () => {
+  const states = [
+    { id: "both-unknown", runtime: null, toolSurface: null, gaps: ["runtime is unknown", "tool surface is unknown"] },
+    { id: "runtime-unknown", runtime: null, toolSurface: [], gaps: ["runtime is unknown"] },
+    { id: "tools-unknown", runtime: execution.runtime, toolSurface: null, gaps: ["tool surface is unknown"] },
+    { id: "complete", runtime: execution.runtime, toolSurface: [], gaps: [] },
+  ];
+  const inventory = states.map(({ id, runtime, toolSurface }) => ({
+    ...candidate(id, "local", "local", "local", "local"),
+    execution: { ...execution, runtime, toolSurface },
+  }));
+
+  const result = resolveCapabilityRole("chat", request({
+    task: { family: "chat", suite: null },
+    inventory,
+  }), options({ policy: { requirements: [], preferences: [], locality: "remote-allowed" } }));
+
+  assert.equal(result.target?.id, "complete");
+  for (const state of states.slice(0, -1)) {
+    const excluded = result.exclusions.find((entry) => entry.candidate.id === state.id);
+    assert.ok(excluded);
+    assert.deepEqual(excluded.candidate.execution.runtime, state.runtime);
+    assert.deepEqual(excluded.candidate.execution.toolSurface, state.toolSurface);
+    assert.deepEqual(excluded.uncertainty.gaps, state.gaps);
+  }
+});
+
+test("resolveCapabilityRole: advisory bounds apply to the rankable partition", () => {
+  const rankable = candidate("rankable", "local", "local", "local", "local");
+  const incomplete = Array.from({ length: 127 }, (_, index) => ({
+    ...candidate(`incomplete-${index}`, "cloud", "remote", "remote", "remote"),
+    execution: { ...execution, runtime: null },
+  }));
+  const advisories = Array.from({ length: 9 }, (_, index) => ({
+    id: `advisory-${index}`,
+    measurementKey: "quality",
+    aggregation: "fact" as const,
+  }));
+
+  const result = resolveCapabilityRole("chat", request({
+    task: { family: "chat", suite: null },
+    inventory: [rankable, ...incomplete],
+  }), options({ policy: { requirements: [], preferences: [], advisories, locality: "remote-allowed" } }));
+
+  assert.equal(result.target?.id, "rankable");
+  assert.equal(result.exclusions.length, 127);
+  assert.ok(result.exclusions.every((entry) => entry.datumReasons.includes("DATUM_EXECUTION_PROFILE_INCOMPLETE")));
+});
+
 test("resolveCapabilityRole: fixed overrides can select launchable candidates with incomplete execution", () => {
   const [unknown] = stationFixtureCandidates();
   const result = resolveCapabilityRole("chat", request({
@@ -352,7 +401,7 @@ test("resolveCapabilityRole: rejects invalid durable and request advisory compos
       task: { family: "chat", suite: null }, inventory,
       advisories: [{ id: "requested", measurementKey: "quality", aggregation: "fact" }],
     }), options({ policy: { requirements: [], preferences: [], advisories: sixty, locality: "remote-allowed" } })),
-    (error: unknown) => (error as { message?: string }).message?.includes("at most 1024 inventory projection cells") === true,
+    (error: unknown) => (error as { message?: string }).message?.includes("at most 1024 projection cells") === true,
   );
 });
 
@@ -553,10 +602,17 @@ test("resolveCapabilityRole: combined policy validation precedes missing-catalog
 
 test("resolveCapabilityRole: result ordering is deterministic and config policy runtime validation rejects unknown keys", () => {
   const role = { policy: { requirements: [], preferences: [], locality: "remote-allowed" as const } };
-  const rankedRequest = request({ task: { family: "chat", suite: null }, inventory: [candidate("local", "local", "local", "local"), candidate("remote", "cloud", "remote", "remote")] });
-  const one = resolveCapabilityRole("chat", rankedRequest, options(role));
-  const two = resolveCapabilityRole("chat", rankedRequest, options(role));
-  assert.deepEqual([one.target?.id, ...one.alternatives.map((entry) => entry.id)], [two.target?.id, ...two.alternatives.map((entry) => entry.id)]);
+  const incomplete = ["z", "ä"].map((id) => {
+    const value = candidate(id, "cloud", "remote", "remote", "remote");
+    value.execution = { ...execution, toolSurface: null };
+    return value;
+  });
+  const inventory = [candidate("local", "local", "local", "local"), ...incomplete, candidate("remote", "cloud", "remote", "remote")];
+  const resolveOptions = { ...options(role), now: () => new Date("2026-07-18T00:00:00.000Z") };
+  const one = resolveCapabilityRole("chat", request({ task: { family: "chat", suite: null }, inventory }), resolveOptions);
+  const two = resolveCapabilityRole("chat", request({ task: { family: "chat", suite: null }, inventory: [...inventory].reverse() }), resolveOptions);
+  assert.deepEqual(one, two);
+  assert.deepEqual(one.exclusions.map((entry) => entry.candidate.id), ["z", "ä"]);
   assert.throws(() => validateConfig({ roles: { chat: { policy: { requirements: [], preferences: [], locality: "local-only", unknown: true } } } }), (error: unknown) => (error as { code?: string }).code === "INVALID_CONFIG");
   assert.throws(() => validateConfig({ roles: { chat: { policy: { requirements: [{ measurementKey: "quality", aggregation: "fact", operator: "gte", value: "high" }], preferences: [], locality: "local-only" } } } }), (error: unknown) => (error as { code?: string }).code === "INVALID_CONFIG");
   assert.throws(() => validateConfig({ roles: { chat: { policy: { requirements: [], preferences: [], advisories: [
@@ -580,6 +636,8 @@ test("resolveCapabilityRole: malformed request envelope, Bearing execution, and 
   const base = request({ task: { family: "chat", suite: null }, inventory: [candidate("remote", "cloud", "remote", "remote")] });
   const malformed = [
     { ...base, schemaVersion: "datum.capability-role.request/v0" },
+    { ...base, inventory: null },
+    { ...base, inventory: [] },
     { ...base, inventory: [{ ...base.inventory[0], execution: { ...execution, runtime: { id: "fixture", version: 1 } } }] },
     { ...base, preferences: [{ measurementKey: "quality", aggregation: "fact", direction: "maximize", weight: 1, unknown: true }] },
   ];

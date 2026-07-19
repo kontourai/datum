@@ -72,11 +72,11 @@ The normative schema is [`datum.schema.json`](./datum.schema.json).
 
 ### Capability roles
 
-A role can instead be a closed policy object. Datum gives Bearing the complete,
-caller-supplied runtime inventory and combines durable requirements/preferences
-with per-request additions. It then applies Datum's provider-model, auth, and
-locality checks to Bearing's deterministic ranking. No candidate outside the
-inventory can be selected.
+A role can instead be a closed policy object. Datum gives Bearing the concrete,
+rankable partition of the caller-supplied runtime inventory and combines durable
+requirements/preferences with per-request additions. It then applies Datum's
+provider-model, auth, and locality checks to Bearing's deterministic ranking. No
+candidate outside the complete caller inventory can be selected.
 
 ```json
 {
@@ -122,7 +122,7 @@ measurement keys, or recommendation meaning from model names or catalog
 internals. Fixed, override, and fallback resolution return no advisories because
 they bypass Bearing. The combined durable and request set must use unique ids,
 contain at most 64 advisories, and produce at most 1,024 inventory projection
-cells over the complete caller inventory. Rank reasons retain Bearing's execution applicability, so partial facts
+cells over the concrete rankable partition sent to Bearing. Rank reasons retain Bearing's execution applicability, so partial facts
 apply only to candidates matching the dimensions their source actually asserts.
 
 ### Capability catalog snapshots
