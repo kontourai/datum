@@ -50,6 +50,8 @@ try {
     "datum.schema.json",
     "dist/src/auth.d.ts",
     "dist/src/auth.js",
+    "dist/src/bounded-json.d.ts",
+    "dist/src/bounded-json.js",
     "dist/src/claudecode.d.ts",
     "dist/src/claudecode.js",
     "dist/src/catalog.d.ts",

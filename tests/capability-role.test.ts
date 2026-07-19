@@ -56,7 +56,7 @@ function options(role: CapabilityRole, extra: Record<string, unknown> = {}): Cap
       ...extra,
     },
     env: { CLOUD_KEY: "present", LOCAL_KEY: "present" },
-    catalog: { catalog: snapshot, metadata: { source: { kind: "local", location: "<local>", key: "fixture" }, digest: snapshot.digest, asOf: snapshot.asOf, ageSeconds: 0, fallback: false, notModified: false, diagnostics: [], warnings: [] } },
+    catalog: { catalog: snapshot, metadata: { source: { kind: "local", location: "<local>", key: "f".repeat(64) }, digest: snapshot.digest, asOf: snapshot.asOf, ageSeconds: 0, fallback: false, notModified: false, diagnostics: [], warnings: [] } },
   };
 }
 
@@ -161,7 +161,39 @@ test("resolveCapabilityRole: fixed durable, session, and environment targets are
   assert.equal(environment.target?.id, "remote");
   const absent = resolveCapabilityRole("chat", request({ task: { family: "chat", suite: null }, inventory }), { ...options("local@local"), env: { CLOUD_KEY: "present", LOCAL_KEY: "present", DATUM_ROLE_CHAT: "missing@cloud" } });
   assert.equal(absent.target, null);
+  assert.equal(absent.posture, "unavailable");
   assert.equal(absent.diagnostics[0]?.code, "DATUM_OVERRIDE_NOT_IN_INVENTORY");
+});
+
+test("resolveCapabilityRole: bare fixed targets never dispatch through colliding role names", () => {
+  const inventory = [candidate("remote", "cloud", "remote", "remote"), candidate("local", "local", "local", "local")];
+  const base = options("local");
+  const collisionConfig = { ...base.config!, roles: { chat: "local", local: "remote@cloud" } };
+  const durable = resolveCapabilityRole("chat", request({ task: { family: "chat", suite: null }, inventory }), { ...base, config: collisionConfig });
+  assert.equal(durable.target?.id, "local");
+
+  const environment = resolveCapabilityRole("chat", request({ task: { family: "chat", suite: null }, inventory }), {
+    ...base,
+    config: { ...collisionConfig, roles: { chat: "remote@cloud", local: "remote@cloud" } },
+    env: { CLOUD_KEY: "present", LOCAL_KEY: "present", DATUM_ROLE_CHAT: "local" },
+  });
+  assert.equal(environment.target?.id, "local");
+
+  const policy = { policy: { requirements: [], preferences: [], locality: "local-only" as const, fallback: "local" } };
+  const fallback = resolveCapabilityRole("chat", request({ task: { family: "chat", suite: null }, inventory }), {
+    ...base,
+    catalog: undefined,
+    config: { ...collisionConfig, roles: { chat: policy, local: "remote@cloud" }, capabilityCatalog: { localPath: "missing.json" } },
+  });
+  assert.equal(fallback.target?.id, "local");
+});
+
+test("resolveCapabilityRole: fixed-result uncertainty is isolated between calls", () => {
+  const input = request({ task: { family: "chat", suite: null }, inventory: [candidate("local", "local", "local", "local")] });
+  const first = resolveCapabilityRole("chat", input, options("local@local"));
+  first.target!.uncertainty.basis.push("caller mutation");
+  const second = resolveCapabilityRole("chat", input, options("local@local"));
+  assert.equal(second.target!.uncertainty.basis.includes("caller mutation"), false);
 });
 
 test("resolveCapabilityRole: missing or stale catalog uses only explicit inventory-bounded fallback", () => {
@@ -228,4 +260,74 @@ test("resolveCapabilityRole: a remote catalog resolves offline from its validate
     assert.equal(result.target?.id, "local");
     assert.equal(result.catalog?.metadata.source.kind, "remote");
   } finally { t.cleanup(); }
+});
+
+test("resolveCapabilityRole: injected catalogs are validated, freshness-checked, and metadata-bound", () => {
+  const policy = { policy: { requirements: [], preferences: [], locality: "local-only" as const, fallback: "local@local" } };
+  const input = request({ task: { family: "chat", suite: null }, inventory: [candidate("local", "local", "local", "local")] });
+  const base = options(policy);
+  const configured = { ...base.config!, capabilityCatalog: { localPath: "unused.json", maxAgeSeconds: 1 } };
+
+  const stale = resolveCapabilityRole("chat", input, { ...base, config: configured, now: () => new Date("2026-07-18T00:00:02.000Z") });
+  assert.equal(stale.posture, "fallback");
+  assert.equal(stale.diagnostics[0]?.code, "CAPABILITY_CATALOG_STALE");
+
+  const future = resolveCapabilityRole("chat", input, { ...base, config: configured, now: () => new Date("2026-07-17T23:59:59.000Z") });
+  assert.equal(future.posture, "unavailable");
+  assert.equal(future.fallback.used, false);
+  assert.equal(future.diagnostics[0]?.code, "CAPABILITY_CATALOG_MALFORMED");
+
+  const mismatchCatalog = { ...base.catalog!, metadata: { ...base.catalog!.metadata, digest: "0".repeat(64) } };
+  const mismatch = resolveCapabilityRole("chat", input, { ...base, catalog: mismatchCatalog });
+  assert.equal(mismatch.posture, "unavailable");
+  assert.equal(mismatch.diagnostics[0]?.code, "CAPABILITY_CATALOG_DIGEST_MISMATCH");
+
+  const malformed = resolveCapabilityRole("chat", input, { ...base, catalog: { catalog: {}, metadata: base.catalog!.metadata } as CapabilityRoleResolveOptions["catalog"] });
+  assert.equal(malformed.posture, "unavailable");
+  assert.equal(malformed.diagnostics[0]?.code, "CAPABILITY_CATALOG_UNSUPPORTED_SCHEMA");
+
+  const oversizedCatalog = { ...base.catalog!, catalog: { ...base.catalog!.catalog, padding: "x".repeat(5 * 1024 * 1024) } };
+  const oversized = resolveCapabilityRole("chat", input, { ...base, catalog: oversizedCatalog as CapabilityRoleResolveOptions["catalog"] });
+  assert.equal(oversized.posture, "unavailable");
+  assert.equal(oversized.diagnostics[0]?.code, "CAPABILITY_CATALOG_LIMIT_EXCEEDED");
+
+  const inheritedCatalog = JSON.parse(`{"__proto__":${JSON.stringify(base.catalog)}}`) as CapabilityRoleResolveOptions["catalog"];
+  const inherited = resolveCapabilityRole("chat", input, { ...base, catalog: inheritedCatalog });
+  assert.equal(inherited.posture, "unavailable");
+  assert.equal(inherited.diagnostics[0]?.code, "CAPABILITY_CATALOG_MALFORMED");
+});
+
+test("resolveCapabilityRole: embedded requests bound nested execution complexity", () => {
+  const role = { policy: { requirements: [], preferences: [], locality: "local-only" as const } };
+  const tooManyTools = candidate("local", "local", "local", "local");
+  tooManyTools.execution = { ...execution, toolSurface: Array.from({ length: 129 }, (_, index) => `tool-${index}`) };
+  assert.throws(
+    () => resolveCapabilityRole("chat", request({ task: { family: "chat", suite: null }, inventory: [tooManyTools] }), options(role)),
+    (error: unknown) => (error as { code?: string }).code === "INVALID_CONFIG",
+  );
+  const longModel = candidate("local", "local", "local", "local");
+  longModel.model.id = "x".repeat(257);
+  assert.throws(
+    () => resolveCapabilityRole("chat", request({ task: { family: "chat", suite: null }, inventory: [longModel] }), options(role)),
+    (error: unknown) => (error as { code?: string }).code === "INVALID_CONFIG",
+  );
+
+  const concealed = request({ task: { family: "chat", suite: null }, inventory: [candidate("local", "local", "local", "local")] });
+  Object.defineProperty(concealed, "toJSON", {
+    enumerable: false,
+    value: () => ({ schemaVersion: concealed.schemaVersion }),
+  });
+  assert.throws(
+    () => resolveCapabilityRole("chat", concealed, options(role)),
+    (error: unknown) => (error as { code?: string }).code === "INVALID_CONFIG",
+  );
+
+  const inherited = JSON.parse(`{"__proto__":${JSON.stringify(request({
+    task: { family: "chat", suite: null },
+    inventory: [candidate("local", "local", "local", "local")],
+  }))}}`) as CapabilityRoleRequest;
+  assert.throws(
+    () => resolveCapabilityRole("chat", inherited, options(role)),
+    (error: unknown) => (error as { code?: string }).code === "INVALID_CONFIG",
+  );
 });

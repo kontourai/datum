@@ -71,6 +71,11 @@ function allModels(config: DatumConfig): string[] {
   return [...set];
 }
 
+/** Resolve a configured model ref directly, without role-name dispatch. */
+export function resolveConfiguredModelRef(config: DatumConfig, ref: string): ResolvedProviderAndModel {
+  return resolveModelRef(config, ref, (model) => unknownModel(model, allModels(config)));
+}
+
 /**
  * Resolve a MODEL ref ("model@provider" or bare "model") to a provider+model.
  * `bareZeroMatch` controls which error a zero-match bare model raises so callers

@@ -8,6 +8,7 @@
  */
 
 import { Buffer } from "node:buffer";
+import { cloneBoundedJson } from "./bounded-json.js";
 import { cacheRoot, loadCachedAt, loadLocalCatalog, persistSnapshot } from "./catalog/cache.js";
 import {
   DEFAULT_CATALOG_MAX_ENTRIES_PER_OBSERVATION,
@@ -19,8 +20,8 @@ import {
   MAX_CATALOG_ETAG_BYTES,
 } from "./catalog/limits.js";
 import { sourceFromOptions } from "./catalog/source.js";
-import { mapCatalogError, parseSnapshot, result } from "./catalog/snapshot.js";
-import { datumError } from "./catalog/shared.js";
+import { assertFresh, mapCatalogError, parseSnapshot, result } from "./catalog/snapshot.js";
+import { datumError, redactRemoteLocation } from "./catalog/shared.js";
 import {
   acquireRemoteCatalog,
   cancelResponseBodyLimited,
@@ -38,6 +39,32 @@ import type {
   CatalogSource,
   RefreshCapabilityCatalogOptions,
 } from "./catalog/types.js";
+
+type RecordValue = Record<string, unknown>;
+
+function record(value: unknown, label: string): RecordValue {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw datumError("CAPABILITY_CATALOG_MALFORMED", `${label} must be an object.`);
+  }
+  return value as RecordValue;
+}
+
+function exactKeys(value: RecordValue, allowed: string[], required: string[], label: string): void {
+  const keys = new Set(allowed);
+  for (const key of Object.keys(value)) {
+    if (!keys.has(key)) throw datumError("CAPABILITY_CATALOG_MALFORMED", `${label} contains unsupported field ${key}.`);
+  }
+  for (const key of required) {
+    if (!(key in value)) throw datumError("CAPABILITY_CATALOG_MALFORMED", `${label} is missing ${key}.`);
+  }
+}
+
+function metadataText(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 4096 || value.trim() !== value) {
+    throw datumError("CAPABILITY_CATALOG_MALFORMED", `${label} must be a non-empty trimmed string.`);
+  }
+  return value;
+}
 
 export {
   DEFAULT_CATALOG_MAX_RESPONSE_BYTES,
@@ -79,6 +106,82 @@ export function loadCapabilityCatalog(opts: CapabilityCatalogOptions = {}): Capa
   }
   const cached = loadCachedAt(cacheRoot(opts), source.key);
   return result(cached.catalog, source, now, cached.state);
+}
+
+/** Validate a caller-injected result with the same snapshot/freshness discipline as offline loading. */
+export function validateInjectedCapabilityCatalog(
+  value: unknown,
+  options: { maxAgeSeconds?: number; now?: () => Date; maxBytes?: number } = {},
+): CapabilityCatalogResult {
+  const maxBytes = options.maxBytes ?? DEFAULT_CATALOG_MAX_RESPONSE_BYTES;
+  const input = record(cloneBoundedJson(value, {
+    label: "injected capability catalog result",
+    maxBytes,
+    maxDepth: 32,
+    maxArrayLength: DEFAULT_CATALOG_MAX_OBSERVATIONS,
+    maxObjectKeys: 128,
+    maxStringBytes: maxBytes,
+    fail: (message) => { throw datumError("CAPABILITY_CATALOG_MALFORMED", message); },
+    limit: (message) => { throw datumError("CAPABILITY_CATALOG_LIMIT_EXCEEDED", message); },
+  }), "Injected capability catalog result");
+  exactKeys(input, ["catalog", "metadata"], ["catalog", "metadata"], "Injected capability catalog result");
+  const text = JSON.stringify(input.catalog);
+  const catalog = parseSnapshot(text, "injected capability catalog");
+  const metadata = record(input.metadata, "Injected capability catalog metadata");
+  const required = ["source", "digest", "asOf", "ageSeconds", "fallback", "notModified", "diagnostics", "warnings"];
+  exactKeys(metadata, [...required, "etag", "fetchedAt"], required, "Injected capability catalog metadata");
+  const source = record(metadata.source, "Injected capability catalog metadata source");
+  exactKeys(source, ["kind", "location", "key"], ["kind", "location", "key"], "Injected capability catalog metadata source");
+  if (source.kind !== "local" && source.kind !== "remote") {
+    throw datumError("CAPABILITY_CATALOG_MALFORMED", "Injected capability catalog metadata source kind is invalid.");
+  }
+  const digest = metadataText(metadata.digest, "Injected capability catalog metadata digest");
+  const asOf = metadataText(metadata.asOf, "Injected capability catalog metadata asOf");
+  if (digest !== catalog.digest || asOf !== catalog.asOf) {
+    throw datumError("CAPABILITY_CATALOG_DIGEST_MISMATCH", "Injected capability catalog metadata does not match its validated body.");
+  }
+  if (typeof metadata.ageSeconds !== "number" || !Number.isFinite(metadata.ageSeconds) || metadata.ageSeconds < 0
+    || typeof metadata.fallback !== "boolean" || typeof metadata.notModified !== "boolean"
+    || !Array.isArray(metadata.diagnostics) || metadata.diagnostics.length > 100
+    || !Array.isArray(metadata.warnings) || metadata.warnings.length > 100
+    || !metadata.warnings.every((item) => typeof item === "string")) {
+    throw datumError("CAPABILITY_CATALOG_MALFORMED", "Injected capability catalog metadata has invalid status fields.");
+  }
+  const diagnostics = metadata.diagnostics.map((entry, index) => {
+    const item = record(entry, `Injected capability catalog diagnostic ${index}`);
+    exactKeys(item, ["code", "message"], ["code", "message"], `Injected capability catalog diagnostic ${index}`);
+    return { code: metadataText(item.code, `Injected capability catalog diagnostic ${index} code`) as CapabilityCatalogMetadata["diagnostics"][number]["code"], message: metadataText(item.message, `Injected capability catalog diagnostic ${index} message`) };
+  });
+  const now = (options.now ?? (() => new Date()))();
+  const ageSeconds = assertFresh(catalog, options.maxAgeSeconds, now);
+  const sourceLocation = metadataText(source.location, "Injected capability catalog metadata source location");
+  let location: string;
+  try { location = source.kind === "local" ? "<local>" : redactRemoteLocation(sourceLocation); } catch {
+    throw datumError("CAPABILITY_CATALOG_MALFORMED", "Injected remote capability catalog metadata location is invalid.");
+  }
+  const sourceKey = metadataText(source.key, "Injected capability catalog metadata source key");
+  if (!/^[a-f0-9]{64}$/.test(sourceKey)) {
+    throw datumError("CAPABILITY_CATALOG_MALFORMED", "Injected capability catalog metadata source key must be a lowercase SHA-256 digest.");
+  }
+  return {
+    catalog,
+    metadata: {
+      source: {
+        kind: source.kind,
+        location,
+        key: sourceKey,
+      },
+      digest,
+      asOf,
+      ageSeconds,
+      ...(metadata.etag === undefined ? {} : { etag: metadataText(metadata.etag, "Injected capability catalog metadata ETag") }),
+      ...(metadata.fetchedAt === undefined ? {} : { fetchedAt: metadataText(metadata.fetchedAt, "Injected capability catalog metadata fetchedAt") }),
+      fallback: metadata.fallback,
+      notModified: metadata.notModified,
+      diagnostics,
+      warnings: [...metadata.warnings],
+    },
+  };
 }
 
 function activateNotModified(

@@ -1,10 +1,11 @@
 /** Offline, inventory-bounded capability-role resolution. */
 import { rankCatalog, validateRankRequest, type ExcludedCandidate, type RankedCandidate, type RankEvidence, type Uncertainty } from "@kontourai/bearing";
 import { describeAuth } from "./auth.js";
+import { cloneBoundedJson } from "./bounded-json.js";
 import { loadConfig } from "./config.js";
-import { loadCapabilityCatalog } from "./catalog.js";
+import { loadCapabilityCatalog, validateInjectedCapabilityCatalog } from "./catalog.js";
 import { DatumError } from "./errors.js";
-import { envKey, resolveRef } from "./resolve.js";
+import { envKey, resolveConfiguredModelRef } from "./resolve.js";
 import { defaultSecretRunner } from "./secrets.js";
 import type {
   CapabilityRoleExclusion,
@@ -21,9 +22,11 @@ import type {
 const MAX_INVENTORY = 128;
 const MAX_RULES = 64;
 const MAX_STRING = 256;
+const MAX_REQUEST_BYTES = 1024 * 1024;
+const MAX_TOOL_SURFACE = 128;
 const MODEL_REF_RE = /^[^@\s]+(@[^@\s]+)?$/;
 const EXPLICIT_MODEL_REF_RE = /^[^@\s]+@[^@\s]+$/;
-const EMPTY_UNCERTAINTY: Uncertainty = { level: "unknown", basis: ["Datum fixed resolution bypasses Bearing ranking."], gaps: [] };
+const fixedUncertainty = (): Uncertainty => ({ level: "unknown", basis: ["Datum fixed resolution bypasses Bearing ranking."], gaps: [] });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -31,6 +34,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function invalid(message: string): never { throw new DatumError("INVALID_CONFIG", message); }
 function bounded(value: unknown, label: string): asserts value is string {
   if (typeof value !== "string" || value.length === 0 || value.length > MAX_STRING || /[\u0000-\u001f]/.test(value)) invalid(`${label} must be a bounded non-control string.`);
+}
+function boundedNullable(value: string | null, label: string): void {
+  if (value !== null) bounded(value, label);
 }
 function effectiveEnv(opts: CapabilityRoleResolveOptions): Record<string, string | undefined> {
   return { ...process.env, ...(opts.env ?? {}) };
@@ -40,7 +46,17 @@ function policyRole(value: unknown): value is PolicyCapabilityRole {
 }
 
 /** Validate request-owned fields before they enter Bearing; no unknown candidate bindings are accepted. */
-function validateRequest(request: CapabilityRoleRequest): void {
+function validateRequest(request: CapabilityRoleRequest): CapabilityRoleRequest {
+  request = cloneBoundedJson(request, {
+    label: "capability role request",
+    maxBytes: MAX_REQUEST_BYTES,
+    maxDepth: 16,
+    maxArrayLength: MAX_INVENTORY,
+    maxObjectKeys: 64,
+    maxStringBytes: MAX_STRING,
+    fail: invalid,
+    limit: invalid,
+  }) as CapabilityRoleRequest;
   if (!isRecord(request)) invalid("capability role request must be an object.");
   for (const key of Object.keys(request)) if (!["schemaVersion", "task", "inventory", "requirements", "preferences", "fixedOverride"].includes(key)) invalid(`capability role request: unknown key "${key}".`);
   if (request.schemaVersion !== "datum.capability-role.request/v1") invalid("capability role request.schemaVersion must be \"datum.capability-role.request/v1\".");
@@ -71,9 +87,13 @@ function validateRequest(request: CapabilityRoleRequest): void {
       }
     }
   }
-  if (request.fixedOverride !== undefined && (typeof request.fixedOverride !== "string" || !EXPLICIT_MODEL_REF_RE.test(request.fixedOverride))) invalid("capability role request.fixedOverride must be an explicit model@provider ref.");
+  if (request.fixedOverride !== undefined) {
+    bounded(request.fixedOverride, "capability role request.fixedOverride");
+    if (!EXPLICIT_MODEL_REF_RE.test(request.fixedOverride)) invalid("capability role request.fixedOverride must be an explicit model@provider ref.");
+  }
+  let validated: ReturnType<typeof validateRankRequest>;
   try {
-    validateRankRequest({
+    validated = validateRankRequest({
       schemaVersion: "bearing.rank.request/v1",
       task: request.task,
       inventory: request.inventory.map(({ id, model, execution }) => ({ id, model, execution })),
@@ -83,13 +103,38 @@ function validateRequest(request: CapabilityRoleRequest): void {
   } catch {
     invalid("capability role request is not a valid bounded Bearing rank request.");
   }
+  for (const [index, candidate] of validated.inventory.entries()) {
+    bounded(candidate.model.id, `capability role request.inventory[${index}].model.id`);
+    boundedNullable(candidate.model.revision, `capability role request.inventory[${index}].model.revision`);
+    boundedNullable(candidate.model.quantization, `capability role request.inventory[${index}].model.quantization`);
+    bounded(candidate.execution.runtime.id, `capability role request.inventory[${index}].execution.runtime.id`);
+    boundedNullable(candidate.execution.runtime.version, `capability role request.inventory[${index}].execution.runtime.version`);
+    if (candidate.execution.adapter !== null) {
+      bounded(candidate.execution.adapter.id, `capability role request.inventory[${index}].execution.adapter.id`);
+      boundedNullable(candidate.execution.adapter.version, `capability role request.inventory[${index}].execution.adapter.version`);
+    }
+    if (candidate.execution.toolSurface.length > MAX_TOOL_SURFACE) {
+      invalid(`capability role request.inventory[${index}].execution.toolSurface must contain at most ${MAX_TOOL_SURFACE} entries.`);
+    }
+    candidate.execution.toolSurface.forEach((tool, toolIndex) => bounded(tool, `capability role request.inventory[${index}].execution.toolSurface[${toolIndex}]`));
+    if (candidate.execution.hardware !== null) {
+      bounded(candidate.execution.hardware.class, `capability role request.inventory[${index}].execution.hardware.class`);
+      boundedNullable(candidate.execution.hardware.accelerator, `capability role request.inventory[${index}].execution.hardware.accelerator`);
+    }
+    if (candidate.execution.workflow !== null) {
+      bounded(candidate.execution.workflow.id, `capability role request.inventory[${index}].execution.workflow.id`);
+      boundedNullable(candidate.execution.workflow.version, `capability role request.inventory[${index}].execution.workflow.version`);
+      boundedNullable(candidate.execution.workflow.condition, `capability role request.inventory[${index}].execution.workflow.condition`);
+    }
+  }
+  return request;
 }
 
 function binding(candidate: CapabilityRuntimeCandidate, provider: ProviderConfig, auth: CapabilityRoleTarget["auth"], env: Record<string, string | undefined>, rank: number | null, score: number | null, reasons: CapabilityRoleTarget["reasons"], evidence: RankEvidence[], uncertainty: Uncertainty, selection: CapabilityRoleTarget["selection"]): CapabilityRoleTarget {
   const baseUrl = env[`DATUM_BASEURL_${envKey(candidate.providerId)}`] ?? provider.baseUrl;
   return { ...candidate, provider: candidate.providerId, kind: provider.kind, ...(baseUrl ? { baseUrl } : {}), auth, rank, score, reasons, evidence, uncertainty, selection };
 }
-function exclusion(candidate: CapabilityRuntimeCandidate, datumReasons: CapabilityRoleReason[], reasons: CapabilityRoleExclusion["reasons"] = [], evidence: RankEvidence[] = [], uncertainty: Uncertainty = EMPTY_UNCERTAINTY): CapabilityRoleExclusion {
+function exclusion(candidate: CapabilityRuntimeCandidate, datumReasons: CapabilityRoleReason[], reasons: CapabilityRoleExclusion["reasons"] = [], evidence: RankEvidence[] = [], uncertainty: Uncertainty = fixedUncertainty()): CapabilityRoleExclusion {
   return { candidate, reasons, datumReasons, evidence, uncertainty };
 }
 function datumEligibility(candidate: CapabilityRuntimeCandidate, config: NonNullable<ReturnType<typeof loadConfig>["config"]>, policy: PolicyCapabilityRole | undefined, env: Record<string, string | undefined>, opts: CapabilityRoleResolveOptions): { provider?: ProviderConfig; auth?: CapabilityRoleTarget["auth"]; reasons: CapabilityRoleReason[] } {
@@ -105,7 +150,7 @@ function selectRef(ref: string, source: "session" | "env" | "durable" | "fallbac
   let providerId: string;
   let providerModel: string;
   try {
-    const resolved = resolveRef(ref, { ...opts, config, env });
+    const resolved = resolveConfiguredModelRef(config, ref);
     providerId = resolved.provider;
     providerModel = resolved.model;
   } catch (error) {
@@ -121,7 +166,7 @@ function selectRef(ref: string, source: "session" | "env" | "durable" | "fallbac
   if (!eligibility.provider || !eligibility.auth) return { target: null, exclusions: [exclusion(matches[0], eligibility.reasons)], diagnostics: [{ code: eligibility.reasons[0], message: `${source} target failed Datum eligibility checks.` }] };
   const reason = source === "session" ? "DATUM_FIXED_SESSION_OVERRIDE" : source === "env" ? "DATUM_FIXED_ENV_OVERRIDE" : source === "fallback" ? "DATUM_POLICY_FALLBACK" : "DATUM_FIXED_DURABLE";
   const posture = source === "fallback" ? "fallback" : source === "durable" ? "durable" : "override";
-  return { target: binding(matches[0], eligibility.provider, eligibility.auth, env, null, null, [], [], EMPTY_UNCERTAINTY, { posture, reason }), exclusions: [], diagnostics: [] };
+  return { target: binding(matches[0], eligibility.provider, eligibility.auth, env, null, null, [], [], fixedUncertainty(), { posture, reason }), exclusions: [], diagnostics: [] };
 }
 function catalogError(error: unknown): { code: string; message: string } {
   if (error instanceof DatumError) return { code: error.code, message: error.message };
@@ -137,7 +182,7 @@ function catalogAllowsFallback(error: unknown): boolean {
  * Bearing v1 supplies rankings/evidence only; advisory projection is deliberately absent (Bearing#22).
  */
 export function resolveCapabilityRole(role: string, request: CapabilityRoleRequest, opts: CapabilityRoleResolveOptions = {}): CapabilityRoleResult {
-  validateRequest(request);
+  request = validateRequest(request);
   const { config } = loadConfig(opts);
   const durable = config.roles?.[role];
   if (durable === undefined) throw new DatumError("UNKNOWN_ROLE", `Unknown role "${role}".`);
@@ -149,13 +194,21 @@ export function resolveCapabilityRole(role: string, request: CapabilityRoleReque
   const overrideSource = session ? "session" : environment ? "env" : null;
   const fallbackState = { configured: policy?.policy.fallback !== undefined, used: false, ...(policy?.policy.fallback ? { ref: policy.policy.fallback } : {}) };
   if (fixed !== undefined) {
-    if (!MODEL_REF_RE.test(fixed)) throw new DatumError("INVALID_CONFIG", "Capability role fixed overrides must use model@provider.");
+    bounded(fixed, "capability role fixed target");
+    if (!MODEL_REF_RE.test(fixed)) throw new DatumError("INVALID_CONFIG", "Capability role fixed targets must use model or model@provider.");
     const selected = selectRef(fixed, session ? "session" : environment ? "env" : "durable", request, config, policy, env, opts);
-    return { schemaVersion: "datum.capability-role.result/v1", mode: "fixed", posture: overrideSource ? "override" : "durable", target: selected.target, alternatives: [], exclusions: selected.exclusions, catalog: null, evidence: [], uncertainty: selected.target?.uncertainty ?? null, override: { active: overrideSource !== null, source: overrideSource, ...(overrideSource ? { ref: fixed } : {}) }, fallback: fallbackState, diagnostics: selected.diagnostics };
+    return { schemaVersion: "datum.capability-role.result/v1", mode: "fixed", posture: selected.target ? (overrideSource ? "override" : "durable") : "unavailable", target: selected.target, alternatives: [], exclusions: selected.exclusions, catalog: null, evidence: [], uncertainty: selected.target?.uncertainty ?? null, override: { active: overrideSource !== null, source: overrideSource, ...(overrideSource ? { ref: fixed } : {}) }, fallback: fallbackState, diagnostics: selected.diagnostics };
   }
 
   let loaded;
-  try { loaded = opts.catalog ?? loadCapabilityCatalog(opts); } catch (error) {
+  try {
+    loaded = opts.catalog === undefined
+      ? loadCapabilityCatalog(opts)
+      : validateInjectedCapabilityCatalog(opts.catalog, {
+        maxAgeSeconds: config.capabilityCatalog?.maxAgeSeconds,
+        now: opts.now,
+      });
+  } catch (error) {
     const diagnostic = catalogError(error);
     if (policy?.policy.fallback && catalogAllowsFallback(error)) {
       const selected = selectRef(policy.policy.fallback, "fallback", request, config, policy, env, opts);
