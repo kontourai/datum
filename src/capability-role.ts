@@ -22,7 +22,6 @@ import { DatumError } from "./errors.js";
 import { envKey, resolveConfiguredModelRef } from "./resolve.js";
 import { defaultSecretRunner } from "./secrets.js";
 import { isLoopbackHost } from "./security.js";
-import { looksLikeSecretLiteral } from "./validate.js";
 import type {
   AuthStatus,
   CapabilityHostAuthStatus,
@@ -319,7 +318,10 @@ function validateBindingAuth(providerId: string, value: unknown): void {
   if (!/^[a-z][a-z0-9.-]{0,63}$/.test(auth.ref as string)) {
     invalid(`capability provider binding "${providerId}".auth.ref must be a lowercase host authority id.`);
   }
-  if (looksLikeSecretLiteral(auth.ref as string)) {
+  const ref = auth.ref as string;
+  const knownCredentialPrefix = /^(sk|pk|rk|ghp|gho|xox)[.-]/i.test(ref);
+  const longOpaqueToken = ref.length >= 32 && !/[.-]/.test(ref);
+  if (knownCredentialPrefix || longOpaqueToken) {
     throw new DatumError("SECRET_LITERAL", `capability provider binding "${providerId}".auth.ref looks like a literal secret; provide only a host-owned binding identifier.`);
   }
   if (typeof auth.available !== "boolean") invalid(`capability provider binding "${providerId}".auth.available must be a boolean.`);

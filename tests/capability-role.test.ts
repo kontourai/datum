@@ -510,6 +510,18 @@ test("resolveCapabilityRole: host bindings supply authoritative non-secret provi
   assert.equal(JSON.stringify(result).includes("CLOUD_KEY"), false);
 });
 
+test("resolveCapabilityRole: host binding authority ids allow descriptive namespaces", () => {
+  const base = options("local@local");
+  const providerBindings = hostBindings();
+  providerBindings.local.auth.ref = "station-provider-inventory";
+  const result = resolveCapabilityRole("chat", request({
+    task: { family: "chat", suite: null },
+    inventory: [candidate("local", "local", "local", "local")],
+  }), { ...base, providerBindings });
+
+  assert.equal(result.target?.auth.ref, "station-provider-inventory");
+});
+
 test("resolveCapabilityRole: host bindings fail closed for unavailable, absent, and mismatched providers", () => {
   const role = { policy: { requirements: [], preferences: [{ measurementKey: "quality", aggregation: "fact" as const, direction: "maximize" as const, weight: 1 }], locality: "remote-allowed" as const } };
   const base = options(role);
@@ -579,6 +591,7 @@ test("resolveCapabilityRole: malformed host bindings and secret-looking refs are
     { local: { ...hostBindings().local, models: ["local", "local"] } },
     { local: { ...hostBindings().local, auth: { kind: "env", ref: "LOCAL_KEY", available: true } } },
     { local: { ...hostBindings().local, auth: { kind: "host", ref: ["sk", "abcdefghijklmnopqrstuvwxyz0123456789"].join("-"), available: true } } },
+    { local: { ...hostBindings().local, auth: { kind: "host", ref: "abcdefghijklmnopqrstuvwxyz0123456789", available: true } } },
     { local: { ...hostBindings().local, baseUrl: "https://user:secret@example.test/v1" } },
     { local: { ...hostBindings().local, baseUrl: "https://example.test/v1?api_key=secret" } },
     JSON.parse(`{"__proto__":${JSON.stringify(hostBindings())}}`),
