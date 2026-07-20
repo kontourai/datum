@@ -70,6 +70,8 @@ export type {
   PolicyCapabilityRole,
   CapabilityExecutionProfile,
   CapabilityRuntimeCandidate,
+  CapabilityHostAuthStatus,
+  CapabilityProviderBinding,
   CapabilityRoleRequest,
   CapabilityRoleReason,
   CapabilityRoleTarget,

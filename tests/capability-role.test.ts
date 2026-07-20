@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { compileCatalog, serializeCatalog, type ExecutionProfile, type ObservationInput } from "@kontourai/bearing";
-import { refreshCapabilityCatalog, resolveCapabilityRole, validateConfig, type CapabilityRole, type CapabilityRoleRequest, type CapabilityRoleResolveOptions, type CapabilityRuntimeCandidate } from "../src/index.js";
+import { refreshCapabilityCatalog, resolveCapabilityRole, validateConfig, type CapabilityProviderBinding, type CapabilityRole, type CapabilityRoleRequest, type CapabilityRoleResolveOptions, type CapabilityRuntimeCandidate } from "../src/index.js";
 import { fakeRunner, tempTree } from "./helpers.js";
 
 const execution: ExecutionProfile = {
@@ -102,6 +102,23 @@ function options(role: CapabilityRole, extra: Record<string, unknown> = {}): Cap
 
 function request(input: Omit<CapabilityRoleRequest, "schemaVersion">): CapabilityRoleRequest {
   return { schemaVersion: "datum.capability-role.request/v1", ...input };
+}
+
+function hostBindings(available = true): Record<string, CapabilityProviderBinding> {
+  return {
+    cloud: {
+      kind: "openai-compatible",
+      baseUrl: "https://cloud.example/v1",
+      models: ["remote", "missing"],
+      auth: { kind: "host", ref: "station", available },
+    },
+    local: {
+      kind: "openai-compatible",
+      baseUrl: "http://127.0.0.1:11434",
+      models: ["local"],
+      auth: { kind: "host", ref: "station", available: true },
+    },
+  };
 }
 
 test("resolveCapabilityRole: local-only policy filters a higher-ranked remote inventory candidate", () => {
@@ -473,6 +490,117 @@ test("resolveCapabilityRole: Datum independently enforces provider and provider-
     }), options(role));
     assert.equal(result.target?.id, "local");
     assert.ok(result.exclusions.some((excluded) => excluded.candidate.id === "remote" && excluded.datumReasons.includes(entry.reason)));
+  }
+});
+
+test("resolveCapabilityRole: host bindings supply authoritative non-secret provider readiness", () => {
+  const role = { policy: { requirements: [], preferences: [{ measurementKey: "quality", aggregation: "fact" as const, direction: "maximize" as const, weight: 1 }], locality: "remote-allowed" as const } };
+  const base = options(role);
+  const result = resolveCapabilityRole("chat", request({
+    task: { family: "chat", suite: null },
+    inventory: [candidate("remote", "cloud", "remote", "remote"), candidate("local", "local", "local", "local")],
+  }), {
+    ...base,
+    config: { roles: base.config!.roles, capabilityCatalog: base.config!.capabilityCatalog },
+    providerBindings: hostBindings(),
+  });
+
+  assert.equal(result.target?.id, "remote");
+  assert.deepEqual(result.target?.auth, { kind: "host", ref: "station", available: true });
+  assert.equal(JSON.stringify(result).includes("CLOUD_KEY"), false);
+});
+
+test("resolveCapabilityRole: host binding authority ids allow descriptive namespaces", () => {
+  const base = options("local@local");
+  const providerBindings = hostBindings();
+  providerBindings.local.auth.ref = "station-provider-inventory";
+  const result = resolveCapabilityRole("chat", request({
+    task: { family: "chat", suite: null },
+    inventory: [candidate("local", "local", "local", "local")],
+  }), { ...base, providerBindings });
+
+  assert.equal(result.target?.auth.ref, "station-provider-inventory");
+});
+
+test("resolveCapabilityRole: host bindings fail closed for unavailable, absent, and mismatched providers", () => {
+  const role = { policy: { requirements: [], preferences: [{ measurementKey: "quality", aggregation: "fact" as const, direction: "maximize" as const, weight: 1 }], locality: "remote-allowed" as const } };
+  const base = options(role);
+  const bindings = hostBindings(false);
+  delete bindings.local;
+  const result = resolveCapabilityRole("chat", request({
+    task: { family: "chat", suite: null },
+    inventory: [
+      candidate("remote", "cloud", "remote", "remote"),
+      candidate("absent", "local", "local", "local"),
+      candidate("mismatch", "cloud", "not-configured", "remote", "remote"),
+    ],
+  }), { ...base, providerBindings: bindings });
+
+  assert.equal(result.target, null);
+  assert.ok(result.exclusions.some((entry) => entry.candidate.id === "remote" && entry.datumReasons.includes("DATUM_AUTH_UNAVAILABLE")));
+  assert.ok(result.exclusions.some((entry) => entry.candidate.id === "absent" && entry.datumReasons.includes("DATUM_PROVIDER_MISSING")));
+  assert.ok(result.exclusions.some((entry) => entry.candidate.id === "mismatch" && entry.datumReasons.includes("DATUM_PROVIDER_MODEL_UNCONFIGURED")));
+});
+
+test("resolveCapabilityRole: host bindings cover fixed, fallback, and local-only paths", () => {
+  const inventory = [candidate("remote", "cloud", "remote", "remote"), candidate("local", "local", "local", "local")];
+  const fixedBase = options("local@local");
+  const fixed = resolveCapabilityRole("chat", request({ task: { family: "chat", suite: null }, inventory, fixedOverride: "remote@cloud" }), {
+    ...fixedBase,
+    config: { roles: fixedBase.config!.roles },
+    providerBindings: hostBindings(),
+  });
+  assert.equal(fixed.target?.id, "remote");
+  assert.equal(fixed.target?.auth.kind, "host");
+
+  const policy = { policy: { requirements: [], preferences: [], locality: "local-only" as const, fallback: "local@local" } };
+  const policyBase = options(policy);
+  const fallback = resolveCapabilityRole("chat", request({ task: { family: "chat", suite: null }, inventory }), {
+    ...policyBase,
+    catalog: undefined,
+    config: { roles: policyBase.config!.roles, capabilityCatalog: { localPath: "missing.json" } },
+    providerBindings: hostBindings(),
+  });
+  assert.equal(fallback.posture, "fallback");
+  assert.equal(fallback.target?.id, "local");
+
+  const ambientOverride = resolveCapabilityRole("chat", request({ task: { family: "chat", suite: null }, inventory: [inventory[1]] }), {
+    ...policyBase,
+    providerBindings: hostBindings(),
+    env: { DATUM_BASEURL_LOCAL: "https://remote.example/v1" },
+  });
+  assert.equal(ambientOverride.target?.id, "local");
+  assert.equal(ambientOverride.target?.baseUrl, "http://127.0.0.1:11434");
+
+  const remoteLocal = hostBindings();
+  remoteLocal.local.baseUrl = "https://remote.example/v1";
+  const rejected = resolveCapabilityRole("chat", request({ task: { family: "chat", suite: null }, inventory: [inventory[1]] }), {
+    ...policyBase,
+    providerBindings: remoteLocal,
+  });
+  assert.equal(rejected.target, null);
+  assert.ok(rejected.exclusions[0].datumReasons.includes("DATUM_LOCALITY_DISALLOWED"));
+});
+
+test("resolveCapabilityRole: malformed host bindings and secret-looking refs are rejected", () => {
+  const input = request({ task: { family: "chat", suite: null }, inventory: [candidate("local", "local", "local", "local")] });
+  const base = options("local@local");
+  const malformed: unknown[] = [
+    { local: { ...hostBindings().local, unknown: true } },
+    { local: { ...hostBindings().local, models: [] } },
+    { local: { ...hostBindings().local, models: ["local", "local"] } },
+    { local: { ...hostBindings().local, auth: { kind: "env", ref: "LOCAL_KEY", available: true } } },
+    { local: { ...hostBindings().local, auth: { kind: "host", ref: ["sk", "abcdefghijklmnopqrstuvwxyz0123456789"].join("-"), available: true } } },
+    { local: { ...hostBindings().local, auth: { kind: "host", ref: "abcdefghijklmnopqrstuvwxyz0123456789", available: true } } },
+    { local: { ...hostBindings().local, baseUrl: "https://user:secret@example.test/v1" } },
+    { local: { ...hostBindings().local, baseUrl: "https://example.test/v1?api_key=secret" } },
+    JSON.parse(`{"__proto__":${JSON.stringify(hostBindings())}}`),
+  ];
+  for (const providerBindings of malformed) {
+    assert.throws(
+      () => resolveCapabilityRole("chat", input, { ...base, providerBindings: providerBindings as Record<string, CapabilityProviderBinding> }),
+      (error: unknown) => ["INVALID_CONFIG", "SECRET_LITERAL"].includes((error as { code?: string }).code ?? ""),
+    );
   }
 });
 

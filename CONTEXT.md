@@ -92,6 +92,15 @@ all are explicit, opt-in commands.
   cache and never fetches. Datum uses Bearing rank v2 for policy/request-declared
   generic advisories and passes each candidate's projections through unchanged;
   it does not interpret or synthesize them from catalog observations.
+- **Host Provider Bindings**: a bounded, ephemeral provider authority supplied
+  to capability-role resolution by an embedding runtime that already owns
+  credential storage and launchability. A binding carries provider kind,
+  credential-free base URL, model membership, and a non-secret host authority
+  id plus availability; never a credential. When supplied, the complete binding
+  map replaces durable providers for that call, while durable roles and catalog
+  policy remain in Datum. Datum still owns provider/model/auth/locality
+  eligibility and fixed/override/fallback bounds. Host bindings are not written
+  to `.datum/config.json` and are not used by secret-materializing `resolve()`.
 - **Config Generators**: datum's `sync` commands, which emit a target tool's
   OWN native config format and stop — datum never proxies or intercepts that
   tool's calls. `datum sync opencode` emits opencode's `provider` block;

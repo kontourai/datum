@@ -28,6 +28,18 @@ label is treated as a claim: `local-only` additionally requires the provider's
 effective configured base URL to identify a loopback endpoint. Missing or
 non-loopback routes are not accepted as evidence of local execution.
 
+An embedding runtime may instead supply an authoritative, ephemeral host
+provider-binding map for one capability-role call. This avoids duplicating or
+fabricating Datum secret references when the host already owns credential
+storage and launchability. Each binding is bounded and secret-free: provider
+kind, optional credential-free base URL, model ids, and a host authority id with
+availability. Datum applies the same membership, auth-availability, and
+locality checks to these bindings. Durable providers are not mixed into a
+host-bound call, and ambient base-URL escape hatches cannot rewrite host-owned
+routing. Durable roles and capability-catalog configuration remain authoritative
+for policy. Existing file-config behavior is unchanged when no bindings are
+supplied.
+
 Session fixed overrides, then `DATUM_ROLE_<NAME>`, then durable fixed refs are
 authoritative only when they identify exactly one inventory candidate that
 passes those Datum checks. Missing or stale catalog state can use only an

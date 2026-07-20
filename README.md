@@ -125,6 +125,18 @@ contain at most 64 advisories, and produce at most 1,024 inventory projection
 cells over the concrete rankable partition sent to Bearing. Rank reasons retain Bearing's execution applicability, so partial facts
 apply only to candidates matching the dimensions their source actually asserts.
 
+Embedding runtimes that already own provider credentials may pass
+`providerBindings` in the resolve options. This bounded, per-call map is the
+authoritative provider universe for that call and contains only provider kind,
+an optional credential-free base URL, allowed model ids, and
+`auth: { kind: "host", ref: "<authority>", available: boolean }`. It never
+contains a credential value. Durable Datum roles and catalog configuration
+still supply policy, while Datum still enforces provider/model membership,
+host-reported auth readiness, fixed/override/fallback bounds, and locality. An
+ambient `DATUM_BASEURL_*` override cannot rewrite a host-owned binding. When
+`providerBindings` is omitted, existing Datum provider config and secret-ref
+availability behavior are unchanged.
+
 ### Capability catalog snapshots
 
 Datum can retain one validated [Bearing](https://github.com/kontourai/bearing)
