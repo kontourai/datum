@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.0](https://github.com/kontourai/datum/compare/v0.6.0...v0.7.0) (2026-07-20)
+
+
+### Features
+
+* consume validated Bearing capability snapshots ([#19](https://github.com/kontourai/datum/issues/19)) ([5d4bfd5](https://github.com/kontourai/datum/commit/5d4bfd518aae206b41ae950cba7e408e8557109d))
+* preserve unknown execution dimensions ([#22](https://github.com/kontourai/datum/issues/22)) ([3674a16](https://github.com/kontourai/datum/commit/3674a16162b48c5b7b97ca9dc66a8efed7a8f4b8))
+* resolve capability-backed roles ([#20](https://github.com/kontourai/datum/issues/20)) ([f77cd6a](https://github.com/kontourai/datum/commit/f77cd6a7922a24bfaeb584095ecd55dd4ad46dbb))
+* support host-managed provider bindings ([#24](https://github.com/kontourai/datum/issues/24)) ([7828f9b](https://github.com/kontourai/datum/commit/7828f9b09c1dd4b4f6bf9da204273a2a207dbb43))
+
+
+### Fixes
+
+* close publish job supply chain gaps ([2cd9630](https://github.com/kontourai/datum/commit/2cd9630e7811c8a7f269d82a6220e4b053cfa2b7))
+* fail closed on undefined host bindings ([#26](https://github.com/kontourai/datum/issues/26)) ([885140c](https://github.com/kontourai/datum/commit/885140cf56d77d9c166f6aad0bc25b2e9293fab9))
+* isolate npm publication authority ([2d7484d](https://github.com/kontourai/datum/commit/2d7484d253bf0c7695ef92e5089380d75f085aea))
+
 ## [0.6.0](https://github.com/kontourai/datum/compare/v0.5.0...v0.6.0) (2026-07-04)
 
 
