@@ -368,10 +368,11 @@ function validateProviderBindings(
 function hostProviderBindings(
   opts: CapabilityRoleResolveOptions,
 ): Record<string, CapabilityProviderBinding> | undefined {
-  if (Object.hasOwn(opts, "providerBindings") && opts.providerBindings !== undefined) {
-    return validateProviderBindings(opts.providerBindings);
+  if (!Object.hasOwn(opts, "providerBindings")) return undefined;
+  if (opts.providerBindings === undefined) {
+    invalid("capability provider bindings must be an object when explicitly supplied.");
   }
-  return undefined;
+  return validateProviderBindings(opts.providerBindings);
 }
 
 interface ResolutionContext {

@@ -604,6 +604,22 @@ test("resolveCapabilityRole: malformed host bindings and secret-looking refs are
   }
 });
 
+test("resolveCapabilityRole: explicitly undefined host bindings fail closed", () => {
+  const input = request({
+    task: { family: "chat", suite: null },
+    inventory: [candidate("local", "local", "local", "local")],
+  });
+  const base = options("local@local");
+
+  assert.throws(
+    () => resolveCapabilityRole("chat", input, {
+      ...base,
+      providerBindings: undefined,
+    }),
+    (error: unknown) => (error as { code?: string }).code === "INVALID_CONFIG",
+  );
+});
+
 test("resolveCapabilityRole: caller requirements are additive to durable requirements", () => {
   const result = resolveCapabilityRole("chat", request({
     task: { family: "chat", suite: null },
