@@ -22,8 +22,11 @@ import { DatumError } from "./errors.js";
 import { envKey, resolveConfiguredModelRef } from "./resolve.js";
 import { defaultSecretRunner } from "./secrets.js";
 import { isLoopbackHost } from "./security.js";
+import { looksLikeSecretLiteral } from "./validate.js";
 import type {
   AuthStatus,
+  CapabilityHostAuthStatus,
+  CapabilityProviderBinding,
   CapabilityRoleExclusion,
   CapabilityExecutionProfile,
   CapabilityRoleReason,
@@ -42,6 +45,7 @@ const MAX_RULES = 64;
 const MAX_STRING = 256;
 const MAX_REQUEST_BYTES = 1024 * 1024;
 const MAX_TOOL_SURFACE = 128;
+const MAX_PROVIDER_BINDINGS = 128;
 const MODEL_REF_RE = /^[^@\s]+(@[^@\s]+)?$/;
 const EXPLICIT_MODEL_REF_RE = /^[^@\s]+@[^@\s]+$/;
 const fixedUncertainty = (): Uncertainty => ({ level: "unknown", basis: ["Datum fixed resolution bypasses Bearing ranking."], gaps: [] });
@@ -281,26 +285,116 @@ function validateRequest(request: CapabilityRoleRequest): CapabilityRoleRequest 
   return request;
 }
 
+type CapabilityProvider = Omit<ProviderConfig, "auth"> & {
+  auth: ProviderConfig["auth"] | CapabilityHostAuthStatus;
+};
+
+function validateBindingBaseUrl(providerId: string, value: unknown): void {
+  if (value === undefined) return;
+  bounded(value, `capability provider binding "${providerId}".baseUrl`);
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    invalid(`capability provider binding "${providerId}".baseUrl must be a valid URL.`);
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    invalid(`capability provider binding "${providerId}".baseUrl must not contain credentials, query parameters, or a fragment.`);
+  }
+}
+
+function validateBindingModels(providerId: string, value: unknown): void {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_INVENTORY) {
+    invalid(`capability provider binding "${providerId}".models must contain 1..${MAX_INVENTORY} model ids.`);
+  }
+  const models = value as unknown[];
+  models.forEach((model, index) => bounded(model, `capability provider binding "${providerId}".models[${index}]`));
+  if (new Set(models).size !== models.length) invalid(`capability provider binding "${providerId}".models must not contain duplicates.`);
+}
+
+function validateBindingAuth(providerId: string, value: unknown): void {
+  const auth = exactRecord(value, `capability provider binding "${providerId}".auth`, ["kind", "ref", "available"]);
+  if (auth.kind !== "host") invalid(`capability provider binding "${providerId}".auth.kind must be "host".`);
+  bounded(auth.ref, `capability provider binding "${providerId}".auth.ref`);
+  if (!/^[a-z][a-z0-9.-]{0,63}$/.test(auth.ref as string)) {
+    invalid(`capability provider binding "${providerId}".auth.ref must be a lowercase host authority id.`);
+  }
+  if (looksLikeSecretLiteral(auth.ref as string)) {
+    throw new DatumError("SECRET_LITERAL", `capability provider binding "${providerId}".auth.ref looks like a literal secret; provide only a host-owned binding identifier.`);
+  }
+  if (typeof auth.available !== "boolean") invalid(`capability provider binding "${providerId}".auth.available must be a boolean.`);
+}
+
+function validateProviderBinding(providerId: string, value: unknown): void {
+  bounded(providerId, "capability provider binding id");
+  if (!isRecord(value)) invalid(`capability provider binding "${providerId}" must be an object.`);
+  const allowed = ["kind", "baseUrl", "models", "auth"];
+  for (const key of Object.keys(value)) {
+    if (!allowed.includes(key)) invalid(`capability provider binding "${providerId}" has unknown key "${key}".`);
+  }
+  for (const key of ["kind", "models", "auth"]) {
+    if (!Object.hasOwn(value, key)) invalid(`capability provider binding "${providerId}" must contain "${key}".`);
+  }
+  bounded(value.kind, `capability provider binding "${providerId}".kind`);
+  validateBindingBaseUrl(providerId, value.baseUrl);
+  validateBindingModels(providerId, value.models);
+  validateBindingAuth(providerId, value.auth);
+}
+
+function validateProviderBindings(
+  value: Record<string, CapabilityProviderBinding>,
+): Record<string, CapabilityProviderBinding> {
+  const cloned = cloneBoundedJson(value, {
+    label: "capability provider bindings",
+    maxBytes: MAX_REQUEST_BYTES,
+    maxDepth: 6,
+    maxArrayLength: MAX_INVENTORY,
+    maxObjectKeys: MAX_PROVIDER_BINDINGS,
+    maxStringBytes: MAX_STRING,
+    fail: invalid,
+    limit: invalid,
+  });
+  if (!isRecord(cloned)) invalid("capability provider bindings must be an object.");
+  const entries = Object.entries(cloned);
+  if (entries.length > MAX_PROVIDER_BINDINGS) {
+    invalid(`capability provider bindings must contain at most ${MAX_PROVIDER_BINDINGS} providers.`);
+  }
+  for (const [providerId, binding] of entries) validateProviderBinding(providerId, binding);
+  return cloned as Record<string, CapabilityProviderBinding>;
+}
+
+function hostProviderBindings(
+  opts: CapabilityRoleResolveOptions,
+): Record<string, CapabilityProviderBinding> | undefined {
+  if (Object.hasOwn(opts, "providerBindings") && opts.providerBindings !== undefined) {
+    return validateProviderBindings(opts.providerBindings);
+  }
+  return undefined;
+}
+
 interface ResolutionContext {
   config: DatumConfig;
+  providers: Record<string, CapabilityProvider>;
+  hostBound: boolean;
   policy: PolicyCapabilityRole | undefined;
   env: Record<string, string | undefined>;
   opts: CapabilityRoleResolveOptions;
-  authByProvider: Map<string, AuthStatus>;
+  authByProvider: Map<string, AuthStatus | CapabilityHostAuthStatus>;
 }
 
-function effectiveBaseUrl(candidate: CapabilityRuntimeCandidate, provider: ProviderConfig, env: Record<string, string | undefined>): string | undefined {
+function effectiveBaseUrl(candidate: CapabilityRuntimeCandidate, provider: CapabilityProvider, env: Record<string, string | undefined>): string | undefined {
+  if ("kind" in provider.auth) return provider.baseUrl;
   return env[`DATUM_BASEURL_${envKey(candidate.providerId)}`] ?? provider.baseUrl;
 }
 
-function binding(candidate: CapabilityRuntimeCandidate, provider: ProviderConfig, auth: CapabilityRoleTarget["auth"], env: Record<string, string | undefined>, rank: number | null, score: number | null, reasons: CapabilityRoleTarget["reasons"], evidence: RankEvidence[], uncertainty: Uncertainty, advisories: RankAdvisoryProjection[], selection: CapabilityRoleTarget["selection"]): CapabilityRoleTarget {
+function binding(candidate: CapabilityRuntimeCandidate, provider: CapabilityProvider, auth: CapabilityRoleTarget["auth"], env: Record<string, string | undefined>, rank: number | null, score: number | null, reasons: CapabilityRoleTarget["reasons"], evidence: RankEvidence[], uncertainty: Uncertainty, advisories: RankAdvisoryProjection[], selection: CapabilityRoleTarget["selection"]): CapabilityRoleTarget {
   const baseUrl = effectiveBaseUrl(candidate, provider, env);
   return { ...candidate, provider: candidate.providerId, kind: provider.kind, ...(baseUrl ? { baseUrl } : {}), auth, rank, score, reasons, evidence, uncertainty, advisories, selection };
 }
 function exclusion(candidate: CapabilityRuntimeCandidate, datumReasons: CapabilityRoleReason[], reasons: CapabilityRoleExclusion["reasons"] = [], evidence: RankEvidence[] = [], uncertainty: Uncertainty = fixedUncertainty(), advisories: RankAdvisoryProjection[] = []): CapabilityRoleExclusion {
   return { candidate, reasons, datumReasons, evidence, uncertainty, advisories };
 }
-function isTrustedLocalCandidate(candidate: CapabilityRuntimeCandidate, provider: ProviderConfig, env: Record<string, string | undefined>): boolean {
+function isTrustedLocalCandidate(candidate: CapabilityRuntimeCandidate, provider: CapabilityProvider, env: Record<string, string | undefined>): boolean {
   if (candidate.locality !== "local") return false;
   const baseUrl = effectiveBaseUrl(candidate, provider, env);
   if (!baseUrl) return false;
@@ -312,16 +406,18 @@ function isTrustedLocalCandidate(candidate: CapabilityRuntimeCandidate, provider
   }
 }
 
-function providerAuth(candidate: CapabilityRuntimeCandidate, provider: ProviderConfig, context: ResolutionContext): AuthStatus {
+function providerAuth(candidate: CapabilityRuntimeCandidate, provider: CapabilityProvider, context: ResolutionContext): AuthStatus | CapabilityHostAuthStatus {
   const cached = context.authByProvider.get(candidate.providerId);
   if (cached) return cached;
-  const auth = describeAuth(provider.auth, context.env, context.opts.secretRunner ?? defaultSecretRunner);
+  const auth = "kind" in provider.auth
+    ? provider.auth
+    : describeAuth(provider.auth, context.env, context.opts.secretRunner ?? defaultSecretRunner);
   context.authByProvider.set(candidate.providerId, auth);
   return auth;
 }
 
-function datumEligibility(candidate: CapabilityRuntimeCandidate, context: ResolutionContext): { provider?: ProviderConfig; auth?: CapabilityRoleTarget["auth"]; reasons: CapabilityRoleReason[] } {
-  const provider = ownValue(context.config.providers, candidate.providerId);
+function datumEligibility(candidate: CapabilityRuntimeCandidate, context: ResolutionContext): { provider?: CapabilityProvider; auth?: CapabilityRoleTarget["auth"]; reasons: CapabilityRoleReason[] } {
+  const provider = ownValue(context.providers, candidate.providerId);
   if (!provider) return { reasons: ["DATUM_PROVIDER_MISSING"] };
   if (!provider.models.includes(candidate.providerModel)) return { reasons: ["DATUM_PROVIDER_MODEL_UNCONFIGURED"] };
   if (context.policy?.policy.locality === "local-only" && !isTrustedLocalCandidate(candidate, provider, context.env)) return { reasons: ["DATUM_LOCALITY_DISALLOWED"] };
@@ -329,13 +425,41 @@ function datumEligibility(candidate: CapabilityRuntimeCandidate, context: Resolu
   if (!auth.available) return { reasons: ["DATUM_AUTH_UNAVAILABLE"] };
   return { provider, auth, reasons: [] };
 }
+
+function resolveCapabilityModelRef(
+  providers: Record<string, CapabilityProvider>,
+  ref: string,
+): { providerId: string; providerModel: string } {
+  const separator = ref.indexOf("@");
+  if (separator !== -1) {
+    const providerId = ref.slice(separator + 1);
+    if (!ownValue(providers, providerId)) throw new DatumError("UNKNOWN_PROVIDER", `Unknown provider "${providerId}".`);
+    return { providerId, providerModel: ref.slice(0, separator) };
+  }
+  const matches = Object.entries(providers)
+    .filter(([, provider]) => provider.models.includes(ref))
+    .map(([providerId]) => providerId);
+  if (matches.length !== 1) {
+    throw new DatumError("INVALID_CONFIG", matches.length === 0
+      ? `No provider binding offers model "${ref}".`
+      : `Model "${ref}" is ambiguous across provider bindings.`);
+  }
+  return { providerId: matches[0], providerModel: ref };
+}
+
 function selectRef(ref: string, source: "session" | "env" | "durable" | "fallback", request: CapabilityRoleRequest, context: ResolutionContext): { target: CapabilityRoleTarget | null; exclusions: CapabilityRoleExclusion[]; diagnostics: CapabilityRoleResult["diagnostics"] } {
   let providerId: string;
   let providerModel: string;
   try {
-    const resolved = resolveConfiguredModelRef(context.config, ref);
-    providerId = resolved.provider;
-    providerModel = resolved.model;
+    if (context.hostBound) {
+      const resolved = resolveCapabilityModelRef(context.providers, ref);
+      providerId = resolved.providerId;
+      providerModel = resolved.providerModel;
+    } else {
+      const resolved = resolveConfiguredModelRef(context.config, ref);
+      providerId = resolved.provider;
+      providerModel = resolved.model;
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "fixed target is invalid.";
     return { target: null, exclusions: [], diagnostics: [{ code: "DATUM_OVERRIDE_NOT_IN_INVENTORY", message }] };
@@ -492,7 +616,16 @@ export function resolveCapabilityRole(role: string, request: CapabilityRoleReque
   if (durable === undefined) throw new DatumError("UNKNOWN_ROLE", `Unknown role "${role}".`);
   const env = effectiveEnv(opts);
   const policy = policyRole(durable) ? durable : undefined;
-  const context: ResolutionContext = { config, policy, env, opts, authByProvider: new Map() };
+  const bindings = hostProviderBindings(opts);
+  const context: ResolutionContext = {
+    config,
+    providers: bindings ?? config.providers ?? {},
+    hostBound: bindings !== undefined,
+    policy,
+    env,
+    opts,
+    authByProvider: new Map(),
+  };
   if (request.fixedOverride !== undefined) return fixedResult(request, context, request.fixedOverride, "session");
   const environment = env[`DATUM_ROLE_${envKey(role)}`];
   if (environment !== undefined) return fixedResult(request, context, environment, "env");

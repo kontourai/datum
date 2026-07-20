@@ -95,6 +95,27 @@ export interface CapabilityRuntimeCandidate {
   execution: CapabilityExecutionProfile;
 }
 
+/** Non-secret auth readiness asserted by an embedding host runtime. */
+export interface CapabilityHostAuthStatus {
+  kind: "host";
+  /** Bounded host-owned binding identifier, never a credential value. */
+  ref: string;
+  available: boolean;
+}
+
+/**
+ * Ephemeral provider binding supplied by an embedding host. When bindings are
+ * provided for a resolution call, they replace durable providers as that
+ * call's provider/model/auth authority while Datum roles and catalog policy
+ * remain durable.
+ */
+export interface CapabilityProviderBinding {
+  kind: ProviderKind;
+  baseUrl?: string;
+  models: string[];
+  auth: CapabilityHostAuthStatus;
+}
+
 export interface CapabilityRoleRequest {
   schemaVersion: "datum.capability-role.request/v1";
   task: RankTask;
@@ -127,7 +148,7 @@ export interface CapabilityRoleTarget extends CapabilityRuntimeCandidate {
   provider: string;
   kind: ProviderKind;
   baseUrl?: string;
-  auth: AuthStatus;
+  auth: AuthStatus | CapabilityHostAuthStatus;
   /** Present for policy ranking; null for fixed, override, and fallback selection. */
   rank: number | null;
   score: number | null;
@@ -267,6 +288,11 @@ export interface ResolveOptions {
 export interface CapabilityRoleResolveOptions extends ResolveOptions {
   /** Offline snapshot injection for embedded callers and deterministic tests. */
   catalog?: CapabilityCatalogResult;
+  /**
+   * Authoritative, non-secret provider bindings from an embedding host. When
+   * present, durable provider entries are not eligible for this call.
+   */
+  providerBindings?: Record<string, CapabilityProviderBinding>;
   /** Injectable clock/cache options are accepted by the offline catalog loader. */
   cacheRoot?: string;
   now?: () => Date;
