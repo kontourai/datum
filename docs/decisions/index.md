@@ -11,6 +11,7 @@ Numbered ADRs under `docs/adr/` are frozen history and are not listed here.
 | Topic | Status | Decision |
 | --- | --- | --- |
 | [capability-catalog](./capability-catalog.md) | current | Capability Catalog |
+| [capability-role-resolution](./capability-role-resolution.md) | current | Capability role resolution |
 | [config-generators](./config-generators.md) | needs-decision | Config generators |
 | [config-precedence](./config-precedence.md) | needs-decision | Config precedence |
 | [config-validation](./config-validation.md) | current | Config validation |

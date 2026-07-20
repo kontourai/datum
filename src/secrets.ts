@@ -48,7 +48,7 @@ export const defaultSecretRunner: SecretRunner = {
 
   opAvailable(): boolean {
     try {
-      const r = spawnSync("op", ["--version"], { encoding: "utf8", stdio: "ignore" });
+      const r = spawnSync("op", ["--version"], { encoding: "utf8", stdio: "ignore", timeout: 2_000 });
       return r.status === 0;
     } catch {
       return false;

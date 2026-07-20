@@ -10,6 +10,7 @@
  *
  * Commands:
  *   datum resolve <ref> [--json|--env] [--reveal] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
+ *   datum resolve-policy <role> --request <json-file> [--json] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
  *   datum list [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
  *   datum doctor [--probe] [--allow-insecure] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
  *   datum discover <provider> [--json] [--allow-insecure] [--cwd <dir>] [--repo-config-path <file>] [--user-config-path <file>]
@@ -37,7 +38,7 @@
  *                              `~/.config/kontour/datum.json` default.
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -57,6 +58,7 @@ import {
   testConnection,
   loadCapabilityCatalog,
   refreshCapabilityCatalog,
+  resolveCapabilityRole,
   DatumError,
 } from "../dist/src/index.js";
 
@@ -66,7 +68,7 @@ const argv = process.argv.slice(2);
 // below skips both the flag and its value, so flags are order-independent
 // relative to positional arguments (e.g. `datum resolve --cwd x ref` and
 // `datum resolve ref --cwd x` both resolve `ref` as the positional).
-const VALUE_FLAGS = new Set(["--role", "--cwd", "--repo-config-path", "--user-config-path"]);
+const VALUE_FLAGS = new Set(["--role", "--request", "--cwd", "--repo-config-path", "--user-config-path"]);
 
 function has(flag) {
   return argv.includes(flag);
@@ -121,6 +123,7 @@ const USAGE = `datum - AI provider/model/role registry resolver
 
 Usage:
   datum resolve <ref> [--json|--env] [--reveal] [config flags]   Resolve a role or model ref
+  datum resolve-policy <role> --request <json-file> [--json] [config flags] Resolve an inventory-bounded capability role offline
   datum list [config flags]                                       List providers and roles (+ key status)
   datum doctor [--probe] [--allow-insecure] [config flags]         Diagnose config; --probe makes one live call/provider
   datum discover <provider> [--json] [--allow-insecure] [config flags]  Fetch the live model list from an openai-compatible provider
@@ -138,6 +141,61 @@ still warns to stderr. The policy is re-checked on every redirect hop, so a
 server cannot bounce a key-bearing request from https:// to plaintext http://.
 
 Secrets are never printed unless --reveal is passed.`;
+
+const MAX_POLICY_REQUEST_BYTES = 1024 * 1024;
+
+function readBoundedPolicyRequest(requestPath) {
+  const fd = openSync(requestPath, "r");
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) {
+      throw new DatumError("INVALID_CONFIG", "resolve-policy request must be a regular file.");
+    }
+    if (stat.size > MAX_POLICY_REQUEST_BYTES) {
+      throw new DatumError("INVALID_CONFIG", `resolve-policy request exceeds ${MAX_POLICY_REQUEST_BYTES} bytes.`);
+    }
+    const buffer = Buffer.allocUnsafe(MAX_POLICY_REQUEST_BYTES + 1);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const count = readSync(fd, buffer, bytesRead, buffer.length - bytesRead, null);
+      if (count === 0) break;
+      bytesRead += count;
+    }
+    if (bytesRead > MAX_POLICY_REQUEST_BYTES) {
+      throw new DatumError("INVALID_CONFIG", `resolve-policy request exceeds ${MAX_POLICY_REQUEST_BYTES} bytes.`);
+    }
+    return JSON.parse(buffer.toString("utf8", 0, bytesRead));
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function cmdResolvePolicy() {
+  const [, role] = positionals();
+  const requestPath = optValue("--request");
+  if (!role || !requestPath) die("resolve-policy: requires <role> and --request <json-file>.\n\n" + USAGE);
+  let request;
+  try {
+    request = readBoundedPolicyRequest(requestPath);
+  } catch (error) {
+    if (error instanceof DatumError) throw error;
+    throw new DatumError("INVALID_CONFIG", "resolve-policy request must be a readable JSON object.");
+  }
+  const result = resolveCapabilityRole(role, request, configOpts());
+  if (has("--json")) {
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    return;
+  }
+  const lines = [
+    `role:      ${role}`,
+    `mode:      ${result.mode} (${result.posture})`,
+    `target:    ${result.target ? `${result.target.id} -> ${result.target.providerModel}@${result.target.providerId}` : "(none)"}`,
+    `catalog:   ${result.catalog ? `${result.catalog.digest} asOf ${result.catalog.asOf}` : "(unavailable)"}`,
+    `fallback:  ${result.fallback.used ? "used" : result.fallback.configured ? "configured, not used" : "not configured"}`,
+  ];
+  if (result.diagnostics.length) lines.push(`diagnostic: ${result.diagnostics.map((entry) => entry.code).join(", ")}`);
+  process.stdout.write(lines.join("\n") + "\n");
+}
 
 /** Compact, non-secret auth summary for a resolved ref. */
 function authSummary(auth) {
@@ -231,6 +289,10 @@ function cmdList() {
   const roles = config.roles ?? {};
   if (Object.keys(roles).length === 0) out.push("  (none)");
   for (const [name, target] of Object.entries(roles)) {
+    if (typeof target !== "string") {
+      out.push(`  ${name} -> capability policy (${target.policy.locality})`);
+      continue;
+    }
     let status;
     try {
       const r = resolveRef(name, opts);
@@ -414,6 +476,9 @@ async function main() {
       case "resolve":
         cmdResolve();
         break;
+      case "resolve-policy":
+        cmdResolvePolicy();
+        break;
       case "list":
         cmdList();
         break;
@@ -446,9 +511,9 @@ async function main() {
       ? err
       : new DatumError("INTERNAL_ERROR", "Unexpected internal failure.");
     if (failure instanceof DatumError) {
-      if (positionals()[0] === "catalog" && has("--json")) {
+      if ((positionals()[0] === "catalog" || positionals()[0] === "resolve-policy") && has("--json")) {
         process.stdout.write(JSON.stringify({
-          schemaVersion: "datum.catalog.error/v1",
+          schemaVersion: positionals()[0] === "catalog" ? "datum.catalog.error/v1" : "datum.resolve-policy.error/v1",
           ok: false,
           error: { code: failure.code, message: failure.message },
         }, null, 2) + "\n");

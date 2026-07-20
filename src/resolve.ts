@@ -56,6 +56,10 @@ interface ResolvedProviderAndModel {
   model: string;
 }
 
+function ownValue<T>(record: Record<string, T> | undefined, key: string): T | undefined {
+  return record && Object.hasOwn(record, key) ? record[key] : undefined;
+}
+
 /** Providers (ids) that offer `model` in their models list. */
 function providersOffering(config: DatumConfig, model: string): string[] {
   const out: string[] = [];
@@ -69,6 +73,11 @@ function allModels(config: DatumConfig): string[] {
   const set = new Set<string>();
   for (const p of Object.values(config.providers ?? {})) for (const m of p.models) set.add(m);
   return [...set];
+}
+
+/** Resolve a configured model ref directly, without role-name dispatch. */
+export function resolveConfiguredModelRef(config: DatumConfig, ref: string): ResolvedProviderAndModel {
+  return resolveModelRef(config, ref, (model) => unknownModel(model, allModels(config)));
 }
 
 /**
@@ -86,7 +95,7 @@ function resolveModelRef(
   if (at !== -1) {
     const model = ref.slice(0, at);
     const provider = ref.slice(at + 1);
-    const providerConfig = config.providers?.[provider];
+    const providerConfig = ownValue(config.providers, provider);
     if (!providerConfig) {
       throw unknownProvider(provider, ref, Object.keys(config.providers ?? {}));
     }
@@ -121,9 +130,11 @@ function resolveProvider(ref: string, opts: ResolveOptions): {
   } else {
     // Bare ref: role-first. Escape hatch DATUM_ROLE_<NAME> can define/override.
     const override = env[`DATUM_ROLE_${envKey(ref)}`];
-    const roleTarget = override ?? config.roles?.[ref];
-    if (roleTarget !== undefined) {
+    const roleTarget = override ?? ownValue(config.roles, ref);
+    if (typeof roleTarget === "string") {
       resolved = resolveModelRef(config, roleTarget, (m) => unknownModel(m, allModels(config)));
+    } else if (roleTarget !== undefined) {
+      throw new DatumError("INVALID_CONFIG", `Role "${ref}" is a capability policy; use resolveCapabilityRole().`);
     } else {
       resolved = resolveModelRef(config, ref, () => unknownRole(ref, Object.keys(config.roles ?? {})));
     }

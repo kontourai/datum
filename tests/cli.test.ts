@@ -76,6 +76,43 @@ test("cli resolve --json: structure without secret", () => {
   });
 });
 
+test("cli resolve-policy: reads a bounded JSON request through the offline library and returns machine-readable errors", () => {
+  const t = tempTree();
+  try {
+    t.writeRepo({
+      providers: { local: { kind: "openai-compatible", auth: { env: "LOCAL_KEY" }, models: ["local"] } },
+      roles: { chat: "local@local" },
+    });
+    const request = path.join(t.cwd, "request.json");
+    writeFileSync(request, JSON.stringify({
+      schemaVersion: "datum.capability-role.request/v1",
+      task: { family: "chat", suite: null },
+      inventory: [{
+        id: "local", providerId: "local", providerModel: "local", locality: "local",
+        model: { id: "local", revision: null, quantization: null },
+        execution: { runtime: { id: "fixture", version: "1" }, adapter: null, effectiveContextTokens: 8192, toolSurface: [], hardware: null, workflow: null },
+      }],
+    }));
+    const ok = run(["resolve-policy", "chat", "--request", request, "--json"], { HOME: t.home, LOCAL_KEY: "present" }, t.cwd);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(JSON.parse(ok.stdout).target.id, "local");
+    writeFileSync(request, "{");
+    const malformed = run(["resolve-policy", "chat", "--request", request, "--json"], { HOME: t.home, LOCAL_KEY: "present" }, t.cwd);
+    assert.equal(malformed.status, 1);
+    const failure = JSON.parse(malformed.stdout);
+    assert.equal(failure.schemaVersion, "datum.resolve-policy.error/v1");
+    assert.equal(failure.error.code, "INVALID_CONFIG");
+    writeFileSync(request, " ".repeat(1024 * 1024 + 1));
+    const oversized = run(["resolve-policy", "chat", "--request", request, "--json"], { HOME: t.home, LOCAL_KEY: "present" }, t.cwd);
+    assert.equal(oversized.status, 1);
+    assert.equal(JSON.parse(oversized.stdout).error.code, "INVALID_CONFIG");
+    assert.ok(JSON.parse(oversized.stdout).error.message.includes("exceeds"));
+    const nonFile = run(["resolve-policy", "chat", "--request", t.cwd, "--json"], { HOME: t.home, LOCAL_KEY: "present" }, t.cwd);
+    assert.equal(nonFile.status, 1);
+    assert.equal(JSON.parse(nonFile.stdout).error.code, "INVALID_CONFIG");
+  } finally { t.cleanup(); }
+});
+
 test("cli resolve --env: never prints secret without --reveal", () => {
   withTree({ TEST_ZAI_KEY: "reveal-me-value" }, (cwd, env) => {
     const r = run(["resolve", "extraction-default", "--env"], env, cwd);

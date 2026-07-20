@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolve, resolveRef } from "../src/index.js";
+import { DatumError, resolve, resolveRef } from "../src/index.js";
 import { SAMPLE } from "./helpers.js";
 
 const base = { config: SAMPLE };
@@ -46,10 +46,32 @@ test("error: unknown role", () => {
   );
 });
 
+test("resolveRef: capability policies require the inventory-aware API", () => {
+  assert.throws(
+    () => resolveRef("planner", {
+      config: { roles: { planner: { policy: { requirements: [], preferences: [], locality: "local-only" } } } },
+    }),
+    (error: unknown) => error instanceof DatumError
+      && error.code === "INVALID_CONFIG"
+      && error.message.includes("resolveCapabilityRole"),
+  );
+});
+
 test("error: unknown provider in model@provider", () => {
   assert.throws(
     () => resolveRef("glm-5.2@ghost", base),
     (e: unknown) => (e as { code: string }).code === "UNKNOWN_PROVIDER",
+  );
+});
+
+test("error: inherited role and provider names are not configuration entries", () => {
+  assert.throws(
+    () => resolveRef("constructor", base),
+    (error: unknown) => (error as { code: string }).code === "UNKNOWN_ROLE",
+  );
+  assert.throws(
+    () => resolveRef("model@constructor", base),
+    (error: unknown) => (error as { code: string }).code === "UNKNOWN_PROVIDER",
   );
 });
 

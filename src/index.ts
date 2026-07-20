@@ -9,6 +9,7 @@
  */
 
 export { resolve, resolveRef, envKey } from "./resolve.js";
+export { resolveCapabilityRole } from "./capability-role.js";
 export { loadConfig, deepMerge, userConfigPath, repoConfigPath } from "./config.js";
 export { validateConfig, looksLikeSecretLiteral } from "./validate.js";
 export { authKind, authRefString, describeAuth } from "./auth.js";
@@ -65,6 +66,15 @@ export type {
   ResolvedTarget,
   ResolvedRef,
   ResolveOptions,
+  CapabilityRole,
+  PolicyCapabilityRole,
+  CapabilityRuntimeCandidate,
+  CapabilityRoleRequest,
+  CapabilityRoleReason,
+  CapabilityRoleTarget,
+  CapabilityRoleExclusion,
+  CapabilityRoleResult,
+  CapabilityRoleResolveOptions,
   CapabilityCatalogConfig,
 } from "./types.js";
 export type {

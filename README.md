@@ -70,6 +70,55 @@ is **`.datum/config.json`**. Commit it.
 
 The normative schema is [`datum.schema.json`](./datum.schema.json).
 
+### Capability roles
+
+A role can instead be a closed policy object. Datum gives Bearing the complete,
+caller-supplied runtime inventory and combines durable requirements/preferences
+with per-request additions. It then applies Datum's provider-model, auth, and
+locality checks to Bearing's deterministic ranking. No candidate outside the
+inventory can be selected.
+
+```json
+{
+  "roles": {
+    "interactive": {
+      "policy": {
+        "requirements": [{ "measurementKey": "model.context.max_tokens", "aggregation": "fact", "operator": "gte", "value": 32768 }],
+        "preferences": [{ "measurementKey": "quality", "aggregation": "mean", "direction": "maximize", "weight": 1 }],
+        "advisories": [{ "id": "context-projection", "measurementKey": "context.projection", "aggregation": "fact" }],
+        "locality": "local-only",
+        "fallback": "qwen3@ollama"
+      }
+    }
+  }
+}
+```
+
+Use the offline API `resolveCapabilityRole(role, request, opts)` or
+`datum resolve-policy <role> --request request.json --json`. A request binds
+an exact `schemaVersion: "datum.capability-role.request/v1"` and binds each
+opaque candidate id to its Datum provider id, provider model id, locality,
+and concrete Bearing model identity/execution profile. Session fixed overrides,
+then `DATUM_ROLE_<NAME>`, then a durable fixed role take precedence and bypass
+Bearing ranking, but still must match exactly one supplied candidate and pass
+Datum checks. Request locality is a caller claim, not sufficient evidence by
+itself: `local-only` also requires the provider's effective configured base URL,
+including `DATUM_BASEURL_<PROVIDER>`, to name a loopback endpoint. Providers
+without an explicit loopback route cannot be proven local. A policy fallback is
+considered only for missing/stale catalog
+state and is subject to the same inventory boundary. Results include catalog
+provenance, evidence, uncertainty, exclusions, and explicit override/fallback
+state; they never materialize secrets or fetch a catalog. Policy and request
+advisories are additive. Datum asks Bearing rank v2 to project them for every
+ranked or excluded candidate and passes the resulting status, value/unit,
+evidence, and uncertainty through unchanged. It does not infer advisory ids,
+measurement keys, or recommendation meaning from model names or catalog
+internals. Fixed, override, and fallback resolution return no advisories because
+they bypass Bearing. The combined durable and request set must use unique ids,
+contain at most 64 advisories, and produce at most 1,024 inventory projection
+cells. Rank reasons retain Bearing's execution applicability, so partial facts
+apply only to candidates matching the dimensions their source actually asserts.
+
 ### Capability catalog snapshots
 
 Datum can retain one validated [Bearing](https://github.com/kontourai/bearing)
@@ -171,6 +220,7 @@ returns an `auth` status (kind + reference + availability) instead of the value.
 
 ```
 datum resolve <ref> [--json|--env] [--reveal] [config flags]      Resolve a role or model ref
+datum resolve-policy <role> --request <json-file> [--json] [config flags] Resolve a capability role offline
 datum list [config flags]                                          Providers + roles, with auth status
 datum doctor [--probe] [--allow-insecure] [config flags]            Diagnose config; --probe makes ONE live call/provider
 datum discover <provider> [--json] [--allow-insecure] [config flags]  Fetch the live model list from an openai-compatible provider
@@ -181,7 +231,8 @@ datum sync claude-code --role <name> [--dry-run] [config flags]     Generate Cla
 ```
 
 - No command prints the API key value unless `--reveal` is passed.
-- `datum doctor` checks that files parse, every role resolves, and every
+- `datum doctor` checks that files parse, every fixed role resolves, records
+  policy roles as inventory-required, and checks every
   provider's key backend is reachable-in-principle (env var set, or keychain/op
   tool present — **the secret is not read**). `--probe` makes one
   `max_tokens: 1` request per provider — `POST /v1/messages` for

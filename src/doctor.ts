@@ -21,7 +21,7 @@ import { DatumError } from "./errors.js";
 import { resolve, resolveRef } from "./resolve.js";
 import { defaultSecretRunner } from "./secrets.js";
 import { safeFetch } from "./security.js";
-import type { ProviderConfig, ProviderKind, ResolveOptions } from "./types.js";
+import type { CapabilityRole, DatumConfig, ProviderConfig, ProviderKind, ResolveOptions } from "./types.js";
 
 export type FetchLike = (
   url: string,
@@ -161,97 +161,88 @@ export interface DoctorOptions extends ResolveOptions {
   allowInsecure?: boolean;
 }
 
+function errorDetail(error: unknown): string {
+  return error instanceof DatumError ? `${error.code}: ${error.message}` : (error as Error).message;
+}
+
+function loadDoctorConfig(opts: DoctorOptions, checks: DoctorCheck[]): DatumConfig | null {
+  try {
+    const loaded = loadConfig(opts);
+    const providers = Object.keys(loaded.config.providers ?? {}).length;
+    const roles = Object.keys(loaded.config.roles ?? {}).length;
+    const files = loaded.sources.length ? loaded.sources.join(", ") : "(none found)";
+    checks.push({ name: "config", status: "pass", detail: `parsed ${loaded.sources.length} file(s) [${files}]; ${providers} provider(s), ${roles} role(s)` });
+    return loaded.config;
+  } catch (error) {
+    checks.push({ name: "config", status: "fail", detail: errorDetail(error) });
+    return null;
+  }
+}
+
+function checkRoles(config: DatumConfig, opts: DoctorOptions, checks: DoctorCheck[]): void {
+  for (const [role, definition] of Object.entries(config.roles ?? {}) as [string, CapabilityRole][]) {
+    if (typeof definition !== "string") {
+      checks.push({ name: `role ${role}`, status: "skip", detail: "capability policy requires runtime inventory; use resolve-policy" });
+      continue;
+    }
+    try {
+      const resolved = resolveRef(role, opts);
+      checks.push({ name: `role ${role}`, status: "pass", detail: `-> ${resolved.model}@${resolved.provider}` });
+    } catch (error) {
+      checks.push({ name: `role ${role}`, status: "fail", detail: errorDetail(error) });
+    }
+  }
+}
+
+function checkProviderAuth(config: DatumConfig, opts: DoctorOptions, checks: DoctorCheck[]): void {
+  const env = { ...process.env, ...(opts.env ?? {}) };
+  const runner = opts.secretRunner ?? defaultSecretRunner;
+  for (const [id, provider] of Object.entries(config.providers ?? {}) as [string, ProviderConfig][]) {
+    const auth = describeAuth(provider.auth, env, runner);
+    const detail = auth.kind === "env"
+      ? (auth.available ? `env ${auth.ref} is set` : `env ${auth.ref} is not set`)
+      : (auth.available
+        ? `${auth.kind} (${auth.ref}) backend available via ${auth.tool}`
+        : `${auth.kind} (${auth.ref}) backend tool ${auth.tool} not available (key not read)`);
+    checks.push({ name: `key ${id}`, status: auth.available ? "pass" : "warn", detail });
+  }
+}
+
+async function probeProvider(id: string, provider: ProviderConfig, opts: DoctorOptions, fetchImpl: FetchLike | undefined): Promise<DoctorCheck> {
+  const probeFn = probeForKind(provider.kind);
+  if (!probeFn) return { name: `probe ${id}`, status: "skip", detail: `kind "${provider.kind}" has no probe implementation` };
+  if (!fetchImpl) return { name: `probe ${id}`, status: "fail", detail: "no fetch implementation available" };
+  let target;
+  try {
+    target = resolve(`${provider.models[0]}@${id}`, opts);
+  } catch (error) {
+    return { name: `probe ${id}`, status: "fail", detail: errorDetail(error) };
+  }
+  const check = await probeFn(
+    { baseUrl: target.baseUrl, apiKey: target.apiKey, model: target.model, allowInsecure: opts.allowInsecure },
+    fetchImpl,
+  );
+  return { ...check, name: `probe ${id}` };
+}
+
+async function checkProbes(config: DatumConfig, opts: DoctorOptions, checks: DoctorCheck[], warnings: string[]): Promise<void> {
+  if (!opts.probe) return;
+  const fetchImpl = opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike | undefined);
+  for (const [id, provider] of Object.entries(config.providers ?? {}) as [string, ProviderConfig][]) {
+    const check = await probeProvider(id, provider, opts, fetchImpl);
+    checks.push(check);
+    if (check.warning) warnings.push(check.warning);
+  }
+}
+
 export async function runDoctor(opts: DoctorOptions = {}): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
   const warnings: string[] = [];
-
-  // 1. Config parse/validate.
-  let loaded;
-  try {
-    loaded = loadConfig(opts);
-    const n = Object.keys(loaded.config.providers ?? {}).length;
-    const r = Object.keys(loaded.config.roles ?? {}).length;
-    const files = loaded.sources.length ? loaded.sources.join(", ") : "(none found)";
-    checks.push({
-      name: "config",
-      status: "pass",
-      detail: `parsed ${loaded.sources.length} file(s) [${files}]; ${n} provider(s), ${r} role(s)`,
-    });
-  } catch (err) {
-    const detail = err instanceof DatumError ? `${err.code}: ${err.message}` : (err as Error).message;
-    checks.push({ name: "config", status: "fail", detail });
-    return { ok: false, checks, warnings };
-  }
-
-  const config = loaded.config;
-
-  // 2. Every role resolves (no secret read).
-  for (const role of Object.keys(config.roles ?? {})) {
-    try {
-      const r = resolveRef(role, opts);
-      checks.push({ name: `role ${role}`, status: "pass", detail: `-> ${r.model}@${r.provider}` });
-    } catch (err) {
-      const detail = err instanceof DatumError ? `${err.code}: ${err.message}` : (err as Error).message;
-      checks.push({ name: `role ${role}`, status: "fail", detail });
-    }
-  }
-
-  // 3. Every provider's key backend is reachable-in-principle — NO secret read.
-  const env = { ...process.env, ...(opts.env ?? {}) };
-  const runner = opts.secretRunner ?? defaultSecretRunner;
-  for (const [id, p] of Object.entries(config.providers ?? {}) as [string, ProviderConfig][]) {
-    const auth = describeAuth(p.auth, env, runner);
-    if (auth.kind === "env") {
-      checks.push({
-        name: `key ${id}`,
-        status: auth.available ? "pass" : "warn",
-        detail: auth.available ? `env ${auth.ref} is set` : `env ${auth.ref} is not set`,
-      });
-    } else {
-      checks.push({
-        name: `key ${id}`,
-        status: auth.available ? "pass" : "warn",
-        detail: auth.available
-          ? `${auth.kind} (${auth.ref}) backend available via ${auth.tool}`
-          : `${auth.kind} (${auth.ref}) backend tool ${auth.tool} not available (key not read)`,
-      });
-    }
-  }
-
-  // 4. Optional live probe.
-  if (opts.probe) {
-    const fetchImpl = opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike | undefined);
-    for (const [id, p] of Object.entries(config.providers ?? {}) as [string, ProviderConfig][]) {
-      const probeFn = probeForKind(p.kind);
-      if (!probeFn) {
-        checks.push({
-          name: `probe ${id}`,
-          status: "skip",
-          detail: `kind "${p.kind}" has no probe implementation`,
-        });
-        continue;
-      }
-      if (!fetchImpl) {
-        checks.push({ name: `probe ${id}`, status: "fail", detail: "no fetch implementation available" });
-        continue;
-      }
-      let target;
-      try {
-        target = resolve(id in (config.roles ?? {}) ? id : (p.models[0] + "@" + id), opts);
-      } catch (err) {
-        const detail = err instanceof DatumError ? `${err.code}: ${err.message}` : (err as Error).message;
-        checks.push({ name: `probe ${id}`, status: "fail", detail });
-        continue;
-      }
-      const check = await probeFn(
-        { baseUrl: target.baseUrl, apiKey: target.apiKey, model: target.model, allowInsecure: opts.allowInsecure },
-        fetchImpl,
-      );
-      checks.push({ ...check, name: `probe ${id}` });
-      if (check.warning) warnings.push(check.warning);
-    }
-  }
-
+  const config = loadDoctorConfig(opts, checks);
+  if (!config) return { ok: false, checks, warnings };
+  checkRoles(config, opts, checks);
+  checkProviderAuth(config, opts, checks);
+  await checkProbes(config, opts, checks, warnings);
   const ok = !checks.some((c) => c.status === "fail");
   return { ok, checks, warnings };
 }

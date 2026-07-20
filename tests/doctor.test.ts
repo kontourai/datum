@@ -37,6 +37,20 @@ test("doctor offline: an unresolvable role fails the report", async () => {
   assert.ok(report.checks.some((c) => c.name === "role broken" && c.status === "fail"));
 });
 
+test("doctor offline: a capability policy is validated but runtime resolution is skipped", async () => {
+  const report = await runDoctor({
+    config: {
+      roles: {
+        planner: { policy: { requirements: [], preferences: [], locality: "local-only" } },
+      },
+    },
+  });
+  assert.equal(report.ok, true);
+  const role = report.checks.find((check) => check.name === "role planner");
+  assert.equal(role?.status, "skip");
+  assert.ok(role?.detail.includes("runtime inventory"));
+});
+
 const okFetch: FetchLike = async () => ({ ok: true, status: 200 });
 const authFetch: FetchLike = async () => ({ ok: false, status: 401 });
 const downFetch: FetchLike = async () => {
@@ -81,6 +95,19 @@ test("doctor --probe: injected fetch, anthropic-compatible probed, key materiali
   const probes = report.checks.filter((c) => c.name.startsWith("probe "));
   assert.equal(probes.length, 2);
   assert.ok(probes.every((p) => p.status === "pass"));
+});
+
+test("doctor --probe: provider ids that collide with policy roles still probe the provider", async () => {
+  const report = await runDoctor({
+    config: {
+      providers: { planner: { kind: "openai-compatible", baseUrl: "https://proxy.example/v1", auth: { env: "PLANNER_KEY" }, models: ["worker-model"] } },
+      roles: { planner: { policy: { requirements: [], preferences: [], locality: "remote-allowed" } } },
+    },
+    env: { PLANNER_KEY: "k" },
+    probe: true,
+    fetchImpl: okFetch,
+  });
+  assert.equal(report.checks.find((check) => check.name === "probe planner")?.status, "pass");
 });
 
 test("doctor --probe: unknown kind is skipped, not failed", async () => {
