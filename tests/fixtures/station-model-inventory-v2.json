@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "station.model-inventory/v2",
+  "observedAt": "2026-07-19T00:00:00.000Z",
+  "models": [
+    {
+      "id": "remote",
+      "connectionId": "cloud-connection",
+      "connectionKind": "model",
+      "providerId": "cloud",
+      "runtime": null,
+      "adapter": null,
+      "model": {
+        "id": "remote",
+        "revision": null,
+        "quantization": null
+      },
+      "providerModel": "remote",
+      "aliases": [],
+      "displayName": "Remote",
+      "locality": "remote",
+      "availability": "available",
+      "freshness": "configured",
+      "observedAt": null,
+      "effectiveContextTokens": null,
+      "toolSurface": null,
+      "supportsVision": null
+    },
+    {
+      "id": "local",
+      "connectionId": "local-connection",
+      "connectionKind": "model",
+      "providerId": "local",
+      "runtime": {
+        "id": "llama.cpp",
+        "version": "1"
+      },
+      "adapter": null,
+      "model": {
+        "id": "local",
+        "revision": null,
+        "quantization": null
+      },
+      "providerModel": "local",
+      "aliases": [],
+      "displayName": "Local",
+      "locality": "local",
+      "availability": "available",
+      "freshness": "live",
+      "observedAt": "2026-07-19T00:00:00.000Z",
+      "effectiveContextTokens": 8192,
+      "toolSurface": [],
+      "supportsVision": false
+    }
+  ],
+  "diagnostics": []
+}

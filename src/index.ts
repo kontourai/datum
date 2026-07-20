@@ -68,6 +68,7 @@ export type {
   ResolveOptions,
   CapabilityRole,
   PolicyCapabilityRole,
+  CapabilityExecutionProfile,
   CapabilityRuntimeCandidate,
   CapabilityRoleRequest,
   CapabilityRoleReason,

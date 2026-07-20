@@ -72,11 +72,11 @@ The normative schema is [`datum.schema.json`](./datum.schema.json).
 
 ### Capability roles
 
-A role can instead be a closed policy object. Datum gives Bearing the complete,
-caller-supplied runtime inventory and combines durable requirements/preferences
-with per-request additions. It then applies Datum's provider-model, auth, and
-locality checks to Bearing's deterministic ranking. No candidate outside the
-inventory can be selected.
+A role can instead be a closed policy object. Datum gives Bearing the concrete,
+rankable partition of the caller-supplied runtime inventory and combines durable
+requirements/preferences with per-request additions. It then applies Datum's
+provider-model, auth, and locality checks to Bearing's deterministic ranking. No
+candidate outside the complete caller inventory can be selected.
 
 ```json
 {
@@ -98,14 +98,20 @@ Use the offline API `resolveCapabilityRole(role, request, opts)` or
 `datum resolve-policy <role> --request request.json --json`. A request binds
 an exact `schemaVersion: "datum.capability-role.request/v1"` and binds each
 opaque candidate id to its Datum provider id, provider model id, locality,
-and concrete Bearing model identity/execution profile. Session fixed overrides,
+Bearing model identity, and caller-observed execution profile. Unknown runtime
+or tool surface is preserved as `null`; `toolSurface: []` remains
+known-empty. Datum sends only candidates with a concrete runtime and tool
+surface to Bearing. Other launchable candidates remain in the result with
+`DATUM_EXECUTION_PROFILE_INCOMPLETE` rather than being discarded or coerced.
+Session fixed overrides,
 then `DATUM_ROLE_<NAME>`, then a durable fixed role take precedence and bypass
 Bearing ranking, but still must match exactly one supplied candidate and pass
 Datum checks. Request locality is a caller claim, not sufficient evidence by
 itself: `local-only` also requires the provider's effective configured base URL,
 including `DATUM_BASEURL_<PROVIDER>`, to name a loopback endpoint. Providers
-without an explicit loopback route cannot be proven local. A policy fallback is
-considered only for missing/stale catalog
+without an explicit loopback route cannot be proven local. Those fixed paths may
+explicitly select an incomplete execution profile without inventing capability.
+A policy fallback is considered only for missing/stale catalog
 state and is subject to the same inventory boundary. Results include catalog
 provenance, evidence, uncertainty, exclusions, and explicit override/fallback
 state; they never materialize secrets or fetch a catalog. Policy and request
@@ -116,7 +122,7 @@ measurement keys, or recommendation meaning from model names or catalog
 internals. Fixed, override, and fallback resolution return no advisories because
 they bypass Bearing. The combined durable and request set must use unique ids,
 contain at most 64 advisories, and produce at most 1,024 inventory projection
-cells. Rank reasons retain Bearing's execution applicability, so partial facts
+cells over the concrete rankable partition sent to Bearing. Rank reasons retain Bearing's execution applicability, so partial facts
 apply only to candidates matching the dimensions their source actually asserts.
 
 ### Capability catalog snapshots
