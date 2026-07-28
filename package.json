@@ -41,12 +41,15 @@
     "check:decisions": "node scripts/check-decisions.cjs check",
     "gen:decisions-index": "node scripts/check-decisions.cjs gen-index",
     "freeze:adrs": "node scripts/freeze-adrs.mjs",
-    "verify": "npm run check:decisions && npm run typecheck && npm test && npm run check:pack"
+    "verify": "npm run check:decisions && npm run typecheck && npm test && npm run check:pack",
+    "workflow:sidecar": "flow-agents-workflow-sidecar",
+    "workflow:validate-artifacts": "flow-agents-validate-artifacts"
   },
   "dependencies": {
     "@kontourai/bearing": "0.2.0"
   },
   "devDependencies": {
+    "@kontourai/flow-agents": "5.5.0",
     "@types/node": "^26.1.2",
     "typescript": "^7.0.2"
   },
