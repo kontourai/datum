@@ -16,7 +16,7 @@
 import { DatumError } from "./errors.js";
 import path from "node:path";
 import { MAX_RANK_V2_TEXT_BYTES } from "@kontourai/bearing";
-import type { CapabilityCatalogConfig, CapabilityRole, DatumConfig, ProviderConfig } from "./types.js";
+import type { AuthRef, CapabilityCatalogConfig, CapabilityRole, DatumConfig, KeychainRef, ProviderConfig } from "./types.js";
 
 /** Env var NAME shape: uppercase identifier. Real secrets do not look like this. */
 const ENV_NAME_RE = /^[A-Z][A-Z0-9_]*$/;
@@ -60,47 +60,58 @@ function secretLiteral(msg: string): never {
 }
 
 /** Recursively scan an auth object's string values for an embedded secret. */
-function scanForSecretLiterals(providerId: string, obj: Record<string, unknown>, keyPath: string): void {
+function scanForSecretLiterals(subject: string, obj: Record<string, unknown>, keyPath: string): void {
   for (const [k, val] of Object.entries(obj)) {
     const path = keyPath ? `${keyPath}.${k}` : k;
     if (typeof val === "string" && looksLikeSecretLiteral(val)) {
       secretLiteral(
-        `provider "${providerId}": auth field "${path}" looks like a literal secret. ` +
+        `${subject} field "${path}" looks like a literal secret. ` +
           `Auth is by reference only — use { "env": "VAR" }, { "keychain": { "service": "..." } } ` +
           `or { "op": "op://vault/item/field" } and keep the key out of config.`,
       );
     } else if (isRecord(val)) {
-      scanForSecretLiterals(providerId, val, path);
+      scanForSecretLiterals(subject, val, path);
     }
   }
 }
 
-function validateKeychain(providerId: string, keychain: unknown): void {
+function parseKeychainRef(subject: string, keychain: unknown): KeychainRef {
   if (!isRecord(keychain)) {
-    invalid(`provider "${providerId}": auth.keychain must be an object { service, account? }.`);
+    invalid(`${subject}.keychain must be an object { service, account? }.`);
   }
   const kc = keychain as Record<string, unknown>;
   for (const k of Object.keys(kc)) {
     if (k !== "service" && k !== "account") {
-      invalid(`provider "${providerId}": auth.keychain: unknown key "${k}" (allowed: service, account).`);
+      invalid(`${subject}.keychain: unknown key "${k}" (allowed: service, account).`);
     }
   }
   if (typeof kc.service !== "string" || kc.service.length === 0) {
-    invalid(`provider "${providerId}": auth.keychain.service must be a non-empty string.`);
+    invalid(`${subject}.keychain.service must be a non-empty string.`);
   }
   if (kc.account !== undefined && (typeof kc.account !== "string" || kc.account.length === 0)) {
-    invalid(`provider "${providerId}": auth.keychain.account must be a non-empty string when present.`);
+    invalid(`${subject}.keychain.account must be a non-empty string when present.`);
   }
+  return { service: kc.service as string, ...(kc.account === undefined ? {} : { account: kc.account as string }) };
 }
 
-function validateAuth(providerId: string, auth: unknown): void {
-  if (!isRecord(auth)) {
-    invalid(`provider "${providerId}": "auth" must be an object ({ env } | { keychain } | { op }).`);
+/**
+ * Strictly parse one inert auth reference. This is Datum's sole validation
+ * authority for provider auth as well as standalone consumer input: references
+ * name a backend, never carry a secret value.
+ */
+export function parseAuthRef(value: unknown): AuthRef {
+  return parseAuthRefWithSubject(value, "auth reference");
+}
+
+/** Shared implementation so provider config and standalone callers cannot drift. */
+function parseAuthRefWithSubject(value: unknown, subject: string, nonObjectSubject = subject): AuthRef {
+  if (!isRecord(value)) {
+    invalid(`${nonObjectSubject} must be an object ({ env } | { keychain } | { op }).`);
   }
-  const a = auth as Record<string, unknown>;
+  const a = value as Record<string, unknown>;
 
   // Scan EVERY auth field value for an embedded secret first, regardless of key.
-  scanForSecretLiterals(providerId, a, "");
+  scanForSecretLiterals(subject, a, "");
 
   const keys = Object.keys(a);
   // Exactly one backend key; it must be one of env / keychain / op.
@@ -108,41 +119,44 @@ function validateAuth(providerId: string, auth: unknown): void {
   const unknownKeys = keys.filter((k) => k !== "env" && k !== "keychain" && k !== "op");
   if (unknownKeys.length > 0) {
     secretLiteral(
-      `provider "${providerId}": auth key "${unknownKeys[0]}" is not allowed. ` +
+      `${subject} key "${unknownKeys[0]}" is not allowed. ` +
         `Auth is by reference only: use { "env": "VAR" }, { "keychain": {...} } or { "op": "op://..." }.`,
     );
   }
   if (backends.length !== 1) {
     invalid(
-      `provider "${providerId}": auth must name exactly one backend ` +
+      `${subject} must name exactly one backend ` +
         `(env | keychain | op); found ${backends.length ? backends.join(", ") : "none"}.`,
     );
   }
 
-  if ("env" in a) {
+  if (Object.hasOwn(a, "env")) {
     const env = a.env;
     if (typeof env !== "string" || env.length === 0) {
-      invalid(`provider "${providerId}": auth.env must be a non-empty env var name.`);
+      invalid(`${subject}.env must be a non-empty env var name.`);
     }
     if (!ENV_NAME_RE.test(env as string)) {
       secretLiteral(
-        `provider "${providerId}": auth.env "${env}" is not a valid env var name ` +
+        `${subject}.env "${env}" is not a valid env var name ` +
           `(expected /^[A-Z][A-Z0-9_]*$/). If you pasted a key here, remove it — use a var name.`,
       );
     }
-  } else if ("keychain" in a) {
-    validateKeychain(providerId, a.keychain);
+    return { env };
+  }
+  if (Object.hasOwn(a, "keychain")) {
+    return { keychain: parseKeychainRef(subject, a.keychain) };
   } else {
     const op = a.op;
     if (typeof op !== "string" || op.length === 0) {
-      invalid(`provider "${providerId}": auth.op must be a non-empty "op://vault/item/field" reference.`);
+      invalid(`${subject}.op must be a non-empty "op://vault/item/field" reference.`);
     }
     if (!OP_URI_RE.test(op as string)) {
       invalid(
-        `provider "${providerId}": auth.op "${op}" is not a valid 1Password reference ` +
+        `${subject}.op "${op}" is not a valid 1Password reference ` +
           `(expected "op://vault/item/field").`,
       );
     }
+    return { op };
   }
 }
 
@@ -167,7 +181,11 @@ function validateProvider(providerId: string, p: unknown): void {
       invalid(`provider "${providerId}": "baseUrl" is not a valid URL: "${prov.baseUrl}".`);
     }
   }
-  validateAuth(providerId, prov.auth);
+  parseAuthRefWithSubject(
+    prov.auth,
+    `provider "${providerId}": auth`,
+    `provider "${providerId}": "auth"`,
+  );
   if (
     !Array.isArray(prov.models) ||
     prov.models.length === 0 ||

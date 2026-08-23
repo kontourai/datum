@@ -183,7 +183,8 @@ the typed failure is raised.
 ### Secret backends (keychain / 1Password)
 
 Keychain and 1Password refs stay reference-only and are materialized **lazily**:
-only `resolve()` (and `doctor --probe`) reads the value — via
+only explicit `resolve()`, `materializeAuthRef()`, or `doctor --probe` operations
+read the value — via
 `security find-generic-password -w` or `op read`. `resolveRef`, `datum list`, and
 `datum sync` **never** invoke the backing tool; they only report the auth *kind*
 and whether the tool/var is *available*, without reading the secret.
@@ -197,9 +198,29 @@ and whether the tool/var is *available*, without reading the secret.
 }
 ```
 
-Missing/unavailable backends surface as typed errors (`SECRET_BACKEND_UNAVAILABLE`
-off darwin or when `op` is not installed; `SECRET_LOOKUP_FAILED` when the item is
-absent or empty) — only at `resolve()` time.
+Missing/unavailable backends surface as typed errors (`MISSING_ENV`,
+`SECRET_BACKEND_UNAVAILABLE` off darwin or when `op` is not installed, and
+`SECRET_LOOKUP_FAILED` when the item is absent or empty) — only when an explicit
+materialization operation is requested.
+
+### Standalone auth references
+
+Embedders that own their own provider records can use Datum's same strict
+reference grammar without adopting Datum config loading:
+
+```ts
+import { materializeAuthRef, parseAuthRef } from "@kontourai/datum";
+
+const auth = parseAuthRef({ env: "STATION_PROVIDER_KEY" });
+const apiKey = materializeAuthRef(auth, { env: process.env });
+```
+
+`parseAuthRef(value)` accepts exactly one `{ env }`, `{ keychain }`, or `{ op }`
+reference and rejects unknown keys and pasted secret literals. `materializeAuthRef`
+performs exactly that selected read and propagates Datum's typed errors. Neither
+`parseAuthRef` nor `describeAuth` reads a secret. Embedders retain ownership of
+secret storage, grants, audit, and model invocation; Datum owns only reference
+grammar, validation, and explicit materialization.
 
 ## The Z.AI walkthrough (canonical example)
 
