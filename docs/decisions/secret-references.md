@@ -1,7 +1,7 @@
 ---
-status: needs-decision
+status: current
 subject: Secret references
-decided: 2026-07-03
+decided: 2026-08-23
 evidence:
   - kind: adr
     ref: docs/adr/0003-secret-reference-only.md
@@ -10,12 +10,20 @@ evidence:
 ---
 # Secret references
 
-This subject has provenance in frozen ADR history ([0003-secret-reference-only.md](../adr/0003-secret-reference-only.md), [0006-slice-2-additions.md](../adr/0006-slice-2-additions.md)) but no living
-decision has been ratified yet under the topic-keyed decision registry
-(`context/contracts/decision-registry-contract.md` in kontourai/flow-agents).
-This stub records that the subject is open and links the frozen ADR(s) as
-provenance; it is not a decision.
+Datum owns the portable secret-reference grammar, its strict validation, and
+explicit lazy materialization. A reference names exactly one supported backend:
+`{ env }`, `{ keychain }`, or `{ op }`; it never embeds a secret literal.
+`parseAuthRef()` is the shared validation authority for both provider config and
+standalone consumers. `materializeAuthRef()` reads only the selected backend and
+preserves typed materialization failures. `describeAuth()` remains
+non-materializing and reports only a reference and availability.
 
-When a living decision is ratified for secret references,
-update this file's `status` to `current`, add rationale, and keep the
-`adr` evidence links as provenance for the history that led here.
+Consumers own secret storage, authorization grants, audit policy, and invocation.
+Datum does not add secret CRUD, grant management, provider networking, or model
+calls. This keeps the reusable reference seam narrow: applications may keep
+their existing credential stores and authority model while sharing one correct,
+secret-reference-only grammar and materialization implementation.
+
+The frozen ADRs remain provenance for the reference-only principle and the
+three supported backends; this living decision records their current public
+library form.

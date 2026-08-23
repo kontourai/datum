@@ -69,10 +69,10 @@ export const ambiguousModel = (model: string, providers: string[]): DatumError =
     `Model "${model}" is ambiguous across providers: ${providers.join(", ")}. Use "${model}@<provider>".`,
   );
 
-export const missingEnv = (envVar: string, provider: string): DatumError =>
+export const missingEnv = (envVar: string, provider?: string): DatumError =>
   new DatumError(
     "MISSING_ENV",
-    `Environment variable "${envVar}" (API key for provider "${provider}") is not set.`,
+    `Environment variable "${envVar}"${provider ? ` (API key for provider "${provider}")` : ""} is not set.`,
   );
 
 /** A secret backend's tool/platform is unavailable (e.g. keychain off darwin, op not installed). */

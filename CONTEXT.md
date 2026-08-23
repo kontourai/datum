@@ -34,11 +34,12 @@ all are explicit, opt-in commands.
   never the secret's literal value. Exactly one backend per provider: `{ env
   }` (an environment variable NAME), `{ keychain }` (a macOS Keychain
   generic-password lookup), or `{ op }` (a 1Password `op://` URI).
-  Materialization is LAZY and explicit: only `resolve()` (and the opt-in
-  `doctor --probe`) reads a value; `resolveRef`/`list`/`sync` only report
-  whether the backend is available, never the value. The validator rejects
-  any auth field that looks like a pasted secret literal rather than a
-  reference.
+  Materialization is LAZY and explicit: `resolve()`, standalone
+  `materializeAuthRef()`, and the opt-in `doctor --probe` may read a value;
+  `resolveRef`/`list`/`sync` only report whether the backend is available,
+  never the value. `parseAuthRef()` is the one strict validation authority for
+  provider configuration and standalone consumers, rejecting any auth field
+  that looks like a pasted secret literal rather than a reference.
 - **Config Validation**: datum's hand-rolled validator (`src/validate.ts`)
   that mirrors the normative `datum.schema.json` and additionally enforces
   the secret-literal rule a plain JSON Schema cannot express. No ajv or other

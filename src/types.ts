@@ -35,10 +35,19 @@ export interface KeychainRef {
  *  - `{ env }`      — the NAME of an env var holding the key.
  *  - `{ keychain }` — a macOS Keychain generic-password lookup (darwin-only).
  *  - `{ op }`       — a 1Password secret reference URI, e.g. "op://vault/item/field".
- * All three are materialized LAZILY (only by `resolve()`); `resolveRef`/`list`/
- * `sync` never invoke the backing tool, they only report its availability.
+ * All three are materialized LAZILY by explicit `resolve()` or
+ * `materializeAuthRef()` calls; `resolveRef`/`list`/`sync` never invoke the
+ * backing tool, they only report its availability.
  */
 export type AuthRef = { env: string } | { keychain: KeychainRef } | { op: string };
+
+/** Explicit inputs for standalone secret-reference materialization. */
+export interface MaterializeAuthRefOptions {
+  /** Environment to read for an `{ env }` reference. Defaults to `process.env`. */
+  env?: Record<string, string | undefined>;
+  /** Injectable keychain / 1Password runner. Defaults to Datum's local runner. */
+  secretRunner?: SecretRunner;
+}
 
 /** Which auth backend a provider uses. */
 export type AuthKind = "env" | "keychain" | "op";

@@ -20,4 +20,4 @@ Numbered ADRs under `docs/adr/` are frozen history and are not listed here.
 | [provider-kinds](./provider-kinds.md) | needs-decision | Provider kinds |
 | [release-automation](./release-automation.md) | current | Release automation |
 | [runtime-dependencies](./runtime-dependencies.md) | current | Runtime dependencies |
-| [secret-references](./secret-references.md) | needs-decision | Secret references |
+| [secret-references](./secret-references.md) | current | Secret references |

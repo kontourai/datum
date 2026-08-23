@@ -148,6 +148,8 @@ try {
       [
         'import * as datum from "@kontourai/datum";',
         'if (typeof datum.validateConfig !== "function") throw new Error("missing validateConfig");',
+        'if (typeof datum.parseAuthRef !== "function") throw new Error("missing parseAuthRef");',
+        'if (typeof datum.materializeAuthRef !== "function") throw new Error("missing materializeAuthRef");',
         'if (typeof datum.resolveRef !== "function") throw new Error("missing resolveRef");',
         'if (typeof datum.resolveCapabilityRole !== "function") throw new Error("missing resolveCapabilityRole");',
         'if (typeof datum.loadCapabilityCatalog !== "function") throw new Error("missing loadCapabilityCatalog");',

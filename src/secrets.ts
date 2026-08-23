@@ -4,8 +4,9 @@
  * Datum stays secret-reference-only: config names WHERE a key lives, never the
  * key. This module materializes those references — but LAZILY. `resolveRef`,
  * `list`, and `sync` never call `read*`; they only ask `*Available()`, which
- * checks the platform / binary WITHOUT reading any secret. Only `resolve()`
- * (and `doctor --probe`, the opt-in live path) call `readKeychain`/`readOp`.
+ * checks the platform / binary WITHOUT reading any secret. Explicit
+ * materialization through `resolve()`, `materializeAuthRef()`, and the opt-in
+ * `doctor --probe` path may call `readKeychain`/`readOp`.
  *
  * The runner is an interface so tests inject a fake and never touch the real
  * macOS Keychain or 1Password CLI. The default implementation shells out with

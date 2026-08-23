@@ -18,11 +18,11 @@
  * would double-apply it. Datum's base-URL escape hatch is its own namespaced var.
  *
  * Secret materialization is LAZY: `resolveRef()` describes the auth backend and
- * whether it is available (no secret read); only `resolve()` reads the value —
- * from the env var, the macOS Keychain, or 1Password, per the provider's auth.
+ * whether it is available (no secret read); `resolve()` delegates its explicit
+ * read to `materializeAuthRef()` for the provider's selected backend.
  */
 
-import { describeAuth, authKind } from "./auth.js";
+import { describeAuth } from "./auth.js";
 import { loadConfig } from "./config.js";
 import {
   ambiguousModel,
@@ -33,8 +33,11 @@ import {
   unknownRole,
 } from "./errors.js";
 import { defaultSecretRunner } from "./secrets.js";
+import { parseAuthRef } from "./validate.js";
 import type {
+  AuthRef,
   DatumConfig,
+  MaterializeAuthRefOptions,
   ProviderConfig,
   ResolvedRef,
   ResolvedTarget,
@@ -48,6 +51,32 @@ export function envKey(name: string): string {
 
 function effectiveEnv(opts: ResolveOptions): Record<string, string | undefined> {
   return { ...process.env, ...(opts.env ?? {}) };
+}
+
+/** Materialize one standalone reference after applying Datum's strict parser. */
+export function materializeAuthRef(ref: unknown, opts: MaterializeAuthRefOptions = {}): string {
+  return materializeAuthRefWithContext(ref, opts);
+}
+
+/**
+ * Resolver-only context retains the established provider-qualified MISSING_ENV
+ * diagnostic without making provider identity part of the standalone Interface.
+ */
+function materializeAuthRefWithContext(
+  ref: unknown,
+  opts: MaterializeAuthRefOptions,
+  provider?: string,
+): string {
+  const auth: AuthRef = parseAuthRef(ref);
+  if ("env" in auth) {
+    const value = (opts.env ?? process.env)[auth.env];
+    if (typeof value !== "string" || value.length === 0) throw missingEnv(auth.env, provider);
+    return value;
+  }
+
+  const runner = opts.secretRunner ?? defaultSecretRunner;
+  if ("keychain" in auth) return runner.readKeychain(auth.keychain);
+  return runner.readOp(auth.op);
 }
 
 interface ResolvedProviderAndModel {
@@ -177,20 +206,7 @@ export function resolveRef(ref: string, opts: ResolveOptions = {}): ResolvedRef 
 export function resolve(ref: string, opts: ResolveOptions = {}): ResolvedTarget {
   const { provider, providerConfig, model, baseUrl, env } = resolveProvider(ref, opts);
   const runner = opts.secretRunner ?? defaultSecretRunner;
-  const auth = providerConfig.auth;
-
-  let apiKey: string;
-  const kind = authKind(auth);
-  if (kind === "env") {
-    const envVar = (auth as { env: string }).env;
-    const val = env[envVar];
-    if (typeof val !== "string" || val.length === 0) throw missingEnv(envVar, provider);
-    apiKey = val;
-  } else if (kind === "keychain") {
-    apiKey = runner.readKeychain((auth as { keychain: { service: string; account?: string } }).keychain);
-  } else {
-    apiKey = runner.readOp((auth as { op: string }).op);
-  }
+  const apiKey = materializeAuthRefWithContext(providerConfig.auth, { env, secretRunner: runner }, provider);
 
   return {
     provider,

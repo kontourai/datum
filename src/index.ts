@@ -8,10 +8,10 @@
  * `runDoctor({ probe: true })` and is opt-in).
  */
 
-export { resolve, resolveRef, envKey } from "./resolve.js";
+export { resolve, resolveRef, envKey, materializeAuthRef } from "./resolve.js";
 export { resolveCapabilityRole } from "./capability-role.js";
 export { loadConfig, deepMerge, userConfigPath, repoConfigPath } from "./config.js";
-export { validateConfig, looksLikeSecretLiteral } from "./validate.js";
+export { validateConfig, looksLikeSecretLiteral, parseAuthRef } from "./validate.js";
 export { authKind, authRefString, describeAuth } from "./auth.js";
 export { defaultSecretRunner } from "./secrets.js";
 export {
@@ -62,6 +62,7 @@ export type {
   AuthRef,
   AuthKind,
   AuthStatus,
+  MaterializeAuthRefOptions,
   KeychainRef,
   ResolvedTarget,
   ResolvedRef,
