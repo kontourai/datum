@@ -5,7 +5,6 @@
 
 ### Features
 
-* **auth:** expose standalone auth references ([#57](https://github.com/kontourai/datum/issues/57)) ([7f68afa](https://github.com/kontourai/datum/commit/7f68afa85b670e1a855069977201da9931704a54))
 * **auth:** expose standalone auth references ([#58](https://github.com/kontourai/datum/issues/58)) ([6ade5dc](https://github.com/kontourai/datum/commit/6ade5dc8d730a2302a29f6f1ccf5eaade14213e7))
 * **kit:** declare builder.build workflow routing ([#54](https://github.com/kontourai/datum/issues/54)) ([1373a34](https://github.com/kontourai/datum/commit/1373a340d65c853ee288d6553343560d9f4a700e))
 
