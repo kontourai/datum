@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.0](https://github.com/kontourai/datum/compare/v0.7.0...v0.8.0) (2026-08-23)
+
+
+### Features
+
+* **auth:** expose standalone auth references ([#58](https://github.com/kontourai/datum/issues/58)) ([6ade5dc](https://github.com/kontourai/datum/commit/6ade5dc8d730a2302a29f6f1ccf5eaade14213e7))
+* **kit:** declare builder.build workflow routing ([#54](https://github.com/kontourai/datum/issues/54)) ([1373a34](https://github.com/kontourai/datum/commit/1373a340d65c853ee288d6553343560d9f4a700e))
+
+
+### Documentation
+
+* content sweep — accuracy and clarity fixes ([#29](https://github.com/kontourai/datum/issues/29)) ([80c251c](https://github.com/kontourai/datum/commit/80c251cd0d9ec290f4c7e601606f9a13273ae136))
+
 ## [0.7.0](https://github.com/kontourai/datum/compare/v0.6.0...v0.7.0) (2026-07-20)
 
 
