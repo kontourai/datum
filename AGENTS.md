@@ -39,6 +39,12 @@ explicit, opt-in commands.
 
 ## Useful Commands
 
+- `pnpm install` — the pnpm version is pinned in `package.json`
+  (`packageManager`). Dependency install scripts are blocked by default; the
+  only packages allowed to run one are listed under `allowBuilds` in
+  `pnpm-workspace.yaml`, pinned by version. Scripts are still run with
+  `npm run …` — that only invokes `package.json` scripts and does not depend on
+  which tool installed `node_modules`.
 - `npm run verify` (check:decisions + typecheck + build + tests + exact package
   and clean-consumer checks — the authoritative local gate while CI is paused)
 - `npm test` · `npm run typecheck` · `npm run build`
