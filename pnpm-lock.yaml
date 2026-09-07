@@ -17,7 +17,7 @@ importers:
         version: 5.5.0(@ai-sdk/provider@4.0.4)(@kontourai/bearing@0.2.0)(typescript@7.0.2)
       '@types/node':
         specifier: ^26.1.2
-        version: 26.1.2
+        version: 26.4.1
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -312,8 +312,8 @@ packages:
     resolution: {integrity: sha512-qv7+G3J2cc6wwFj3yKvXOamzqhMwSk1ogPGmhpS8iXllcPrJaIIBA+4HbttlHVu1pqWTdmaCH/WE7UOC51kdoA==}
     engines: {node: ^20.17.0 || >=22.9.0}
 
-  '@types/node@26.1.2':
-    resolution: {integrity: sha512-Vu4a5UFA9rIIFJ7rB/Vaafh9lrCQszopTCx6KjFboXTGQbPNasehVR5TEiithSDGyd1DEiUByggTZsg8jukeIg==}
+  '@types/node@26.4.1':
+    resolution: {integrity: sha512-k97ENvZWtvA6yqz5/FS6a7duDgOPEeOQOc2iKS/nY6mX6qJUKtLnWzQS+Xj6tXweyj6ZcTAK2Qecetnvi9nCLA==}
 
   '@typescript/typescript-aix-ppc64@7.0.2':
     resolution: {integrity: sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ==}
@@ -905,7 +905,7 @@ snapshots:
       '@sigstore/protobuf-specs': 0.5.1
     optional: true
 
-  '@types/node@26.1.2':
+  '@types/node@26.4.1':
     dependencies:
       undici-types: 8.3.0
 
