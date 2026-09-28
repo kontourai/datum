@@ -64,7 +64,7 @@ jobs:
       # i.e. check:decisions (ADR index/freeze integrity), typecheck, npm test
       # (build + node --test suite), then check:pack.
       - id: trust-verify
-        uses: kontourai/flow-agents/.github/actions/trust-verify@90b260996e1c4477c56317935f0362d48a8cf8d5 # flow-agents Trust failure summary output
+        uses: kontourai/flow-agents/.github/actions/trust-verify@9696ff6844ca21f81d95efe0885f1bd43dbe02b1 # flow-agents Trust failure summary output
         with:
           verify-command: "npm run verify"
 
