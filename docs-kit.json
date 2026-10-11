@@ -1,0 +1,183 @@
+{
+  "schemaVersion": 1,
+  "product": "datum",
+  "title": "Datum",
+  "tagline": "The Kontour AI provider, model, and role registry: define them once, then resolve which backend, model, key, and base URL to use. Never makes model calls.",
+  "repo": "kontourai/datum",
+  "landing": "README.md",
+  "documents": [
+    {
+      "source": "CONTEXT.md",
+      "section": "Concepts"
+    },
+    {
+      "source": "docs/reference.md",
+      "section": "Reference",
+      "covers": [
+        "src/index.ts"
+      ]
+    },
+    {
+      "source": "docs/design.md",
+      "section": "Design Decisions"
+    },
+    {
+      "source": "docs/decisions/index.md",
+      "section": "Design Decisions"
+    },
+    {
+      "source": "docs/decisions/capability-catalog.md",
+      "section": "Design Decisions"
+    },
+    {
+      "source": "docs/decisions/capability-role-resolution.md",
+      "section": "Design Decisions"
+    },
+    {
+      "source": "docs/decisions/config-generators.md",
+      "section": "Design Decisions"
+    },
+    {
+      "source": "docs/decisions/config-precedence.md",
+      "section": "Design Decisions"
+    },
+    {
+      "source": "docs/decisions/config-validation.md",
+      "section": "Design Decisions"
+    },
+    {
+      "source": "docs/decisions/configuration-resolution.md",
+      "section": "Design Decisions"
+    },
+    {
+      "source": "docs/decisions/https-enforcement.md",
+      "section": "Design Decisions"
+    },
+    {
+      "source": "docs/decisions/provider-kinds.md",
+      "section": "Design Decisions"
+    },
+    {
+      "source": "docs/decisions/release-automation.md",
+      "section": "Design Decisions"
+    },
+    {
+      "source": "docs/decisions/runtime-dependencies.md",
+      "section": "Design Decisions"
+    },
+    {
+      "source": "docs/decisions/secret-references.md",
+      "section": "Design Decisions"
+    },
+    {
+      "source": "docs/adr/index.md",
+      "section": "Decision History (ADRs)"
+    },
+    {
+      "source": "docs/adr/0001-configuration-resolution.md",
+      "section": "Decision History (ADRs)"
+    },
+    {
+      "source": "docs/adr/0002-config-precedence.md",
+      "section": "Decision History (ADRs)"
+    },
+    {
+      "source": "docs/adr/0003-secret-reference-only.md",
+      "section": "Decision History (ADRs)"
+    },
+    {
+      "source": "docs/adr/0004-zero-deps-validation.md",
+      "section": "Decision History (ADRs)"
+    },
+    {
+      "source": "docs/adr/0005-generator-not-wrapper.md",
+      "section": "Decision History (ADRs)"
+    },
+    {
+      "source": "docs/adr/0006-slice-2-additions.md",
+      "section": "Decision History (ADRs)"
+    },
+    {
+      "source": "docs/adr/0007-repo-config-path-correction.md",
+      "section": "Decision History (ADRs)"
+    }
+  ],
+  "topics": [
+    {
+      "id": "what-datum-is",
+      "title": "What Datum is and is not",
+      "source": "README.md#what-datum-is-not"
+    },
+    {
+      "id": "config-files",
+      "title": "Config files, precedence, and auth references",
+      "source": "README.md#config"
+    },
+    {
+      "id": "glossary",
+      "title": "Datum term glossary",
+      "source": "CONTEXT.md#term-glossary"
+    },
+    {
+      "id": "resolve-api",
+      "title": "Resolving a role or model ref (resolve, resolveRef)",
+      "source": "docs/reference.md#resolving-a-ref"
+    },
+    {
+      "id": "config-loading",
+      "title": "Loading and merging config in code",
+      "source": "docs/reference.md#loading-config"
+    },
+    {
+      "id": "auth-references",
+      "title": "Auth references and secret materialization API",
+      "source": "docs/reference.md#auth-references"
+    },
+    {
+      "id": "secret-backends",
+      "title": "Keychain and 1Password secret backends",
+      "source": "README.md#secret-backends-keychain--1password"
+    },
+    {
+      "id": "capability-roles",
+      "title": "Capability roles and policy resolution",
+      "source": "README.md#capability-roles"
+    },
+    {
+      "id": "capability-catalog",
+      "title": "Bearing capability catalog snapshots",
+      "source": "README.md#capability-catalog-snapshots"
+    },
+    {
+      "id": "cli",
+      "title": "datum CLI commands and flags",
+      "source": "README.md#cli"
+    },
+    {
+      "id": "provider-kinds",
+      "title": "Provider kinds and consumer support",
+      "source": "README.md#provider-kinds--consumers"
+    },
+    {
+      "id": "traverse-integration",
+      "title": "Walkthrough: resolve a role and wire it into traverse",
+      "source": "README.md#the-zai-walkthrough-canonical-example"
+    },
+    {
+      "id": "config-generators",
+      "title": "Generating opencode and Claude Code config",
+      "source": "docs/reference.md#config-generators"
+    },
+    {
+      "id": "diagnostics",
+      "title": "doctor, discover, test-connection, and the HTTPS policy",
+      "source": "docs/reference.md#diagnostics"
+    },
+    {
+      "id": "errors",
+      "title": "Error codes and troubleshooting",
+      "source": "docs/reference.md#errors"
+    }
+  ],
+  "exclude": []
+}
