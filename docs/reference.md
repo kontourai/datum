@@ -6,8 +6,11 @@ This page lists what it exports, grouped by job. The CLI (`datum`, from
 listed in the [README](../README.md#cli). The config file format is defined by
 [`datum.schema.json`](../datum.schema.json).
 
-Nothing on this page makes a network call except the functions marked
-**network**, and none of those runs unless you call it.
+Only the functions marked **network** make network calls, and none of them
+runs unless you call it: `runDoctor` with `probe: true`,
+`probeAnthropicCompatible`, `probeOpenaiCompatible`, `discoverModels`,
+`fetchOpenaiCompatibleModels`, `testConnection`, `refreshCapabilityCatalog`,
+and `safeFetch`.
 
 ## Resolve options
 
@@ -20,7 +23,7 @@ Most functions take a `ResolveOptions` object. Every field is optional.
 | `home` | Directory used to find the user-level `~/.config/kontour/datum.json`. Default: `os.homedir()`. |
 | `userConfigPath` | Explicit user config path. Overrides `home`. |
 | `repoConfigPath` | Explicit repo config path. Overrides `cwd`. |
-| `env` | Environment overrides, merged over `process.env`. They win for both the escape hatches and `{ env }` key lookups. |
+| `env` | Environment overrides, merged over `process.env`. They win for both the escape hatches and `{ env }` key lookups. (Standalone `materializeAuthRef` treats its own `env` option differently; see [Auth references](#auth-references).) |
 | `secretRunner` | A `SecretRunner` for keychain and 1Password reads. Default: `defaultSecretRunner`. |
 
 The CLI flags `--cwd`, `--repo-config-path`, and `--user-config-path` map to
@@ -51,7 +54,8 @@ How a ref is resolved:
 1. A ref containing `@` is a model ref, `model@provider`. It is never a role.
    An unknown provider throws `UNKNOWN_PROVIDER`.
 2. A bare ref is looked up as a role first. `DATUM_ROLE_<NAME>` (from `opts.env`
-   or `process.env`) replaces the role's target. A role whose value is a string
+   or `process.env`) replaces the role's target, or defines the role when the
+   config has no role of that name. A role whose value is a string
    resolves as that model ref. A role whose value is a capability policy throws
    `INVALID_CONFIG`; use `resolveCapabilityRole()` for those.
 3. A bare ref that is not a role is a bare model. Exactly one provider must list
@@ -85,7 +89,8 @@ still inherits unless the repo sets it.
   and values that look like a pasted secret. It reads nothing.
 - `materializeAuthRef(ref, { env?, secretRunner? }?) → string` parses the
   reference, then reads that one secret. A missing or empty variable throws
-  `MISSING_ENV`.
+  `MISSING_ENV`. Here `env` replaces `process.env` rather than merging over it:
+  when you pass `env`, an `{ env }` reference is looked up only in that object.
 - `describeAuth(auth, env, runner) → AuthStatus`, `authKind(auth)`, and
   `authRefString(auth)` describe a reference without reading the secret.
 - `looksLikeSecretLiteral(value)` is the check the validator uses to reject
@@ -107,6 +112,12 @@ catalog from `opts.catalog` or from the local cache, and never fetches one.
   `requirements`, `preferences`, `advisories`, and a `fixedOverride` model ref.
 - `opts` extends `ResolveOptions` with `catalog`, `providerBindings`,
   `cacheRoot`, and `now`.
+- `opts.catalog` injects a catalog instead of reading the cache. It has the
+  `CapabilityCatalogResult` shape that `loadCapabilityCatalog` and
+  `refreshCapabilityCatalog` return: `{ catalog, metadata }`. It is validated
+  strictly: unknown keys are refused, the snapshot is re-parsed, `metadata`'s
+  `digest` and `asOf` must match the snapshot, and the config's
+  `capabilityCatalog.maxAgeSeconds` freshness bound still applies.
 - The result reports `mode` (`fixed` or `policy`), `posture`
   (`override`, `durable`, `fallback`, or `unavailable`), the selected `target`,
   `alternatives`, `exclusions`, catalog provenance, `override` and `fallback`
@@ -140,12 +151,18 @@ Generators emit references, never secret values.
   opencode's `provider` block. Providers whose kind has no known opencode
   package, or whose auth is not `{ env }`, are skipped with a warning.
   `npmForKind(kind)` returns the package used for a kind.
+  `OPENCODE_FORMAT_VERSION` names the opencode config format the generator was
+  written against.
 - `mergeIntoOpencodeConfig(existing, block)` returns a new config with Datum's
   provider ids replaced and everything else kept.
-- `generateClaudeCodeEnv(role, resolvedRef)` builds Claude Code's settings
-  `env` block (`ANTHROPIC_MODEL`, plus `ANTHROPIC_BASE_URL` when set) and an
-  instruction naming where the key lives. It throws `INVALID_CONFIG` unless the
-  provider kind is `anthropic-compatible`.
+- `generateClaudeCodeEnv(role, resolvedRef)` returns
+  `{ role, provider, kind, env, ownedKeys, apiKeyInstruction }`. `env` is
+  Claude Code's settings `env` block (`ANTHROPIC_MODEL`, plus
+  `ANTHROPIC_BASE_URL` when the provider has a base URL); `ownedKeys` lists the
+  keys present in `env`; `apiKeyInstruction` is text naming where the key lives,
+  never the key. It throws `INVALID_CONFIG` unless the provider kind is
+  `anthropic-compatible`. `CLAUDE_CODE_FORMAT_VERSION` names the Claude Code
+  settings format the generator was written against.
 - `mergeIntoClaudeCodeSettings(existing, env)` returns new settings with only
   `CLAUDE_CODE_MANAGED_ENV_KEYS` replaced.
 
@@ -167,15 +184,36 @@ The CLI equivalents are `datum sync opencode` and `datum sync claude-code`.
   and reachability. Failures are classified as `auth`, `unreachable`,
   `incompatible`, or `insecure`. Kinds other than the two implemented ones are
   reported as `skip`.
-- `enforceHttpsPolicy(url, { allowInsecure? })` and `safeFetch` apply the HTTPS
-  policy these functions share: `https://` and loopback `http://` are allowed,
-  other `http://` is blocked unless `allowInsecure` is set, and the policy is
-  re-checked on every redirect.
+- `enforceHttpsPolicy(url, { allowInsecure? })` applies the HTTPS policy these
+  functions share: `https://` and loopback `http://` are allowed, and other
+  `http://` is blocked unless `allowInsecure` is set.
+- `safeFetch(url, init, fetchImpl, { allowInsecure?, maxRedirects? }?)`
+  (**network**) returns `Promise<{ blocked, detail?, warning?, response? }>`.
+  It calls `fetchImpl` with `redirect: "manual"` and follows redirects itself,
+  re-checking the policy before each hop, up to `maxRedirects` (default 5),
+  after which it throws. A blocked URL returns `blocked: true` with a `detail`,
+  and `fetchImpl` is never called for it.
 
 ## Errors
 
-Every expected failure is a `DatumError` with a stable `code` (type
-`DatumErrorCode`). The CLI prints `CODE: message` to stderr and exits `1`.
+Every expected library failure is a `DatumError` with a stable `code` (type
+`DatumErrorCode`). `DatumError` is exported, so callers can test
+`err instanceof DatumError` and branch on `err.code`.
+
+When a CLI command throws a `DatumError`, the CLI prints `CODE: message` to
+stderr and exits `1`, with these exceptions:
+
+- With `--json`, `datum catalog` and `datum resolve-policy` instead print a
+  JSON envelope to stdout, `{ schemaVersion, ok: false, error: { code, message } }`,
+  and exit `1`.
+- Any other thrown error is reported as
+  `INTERNAL_ERROR: Unexpected internal failure.`
+- `datum doctor`, `datum test-connection`, and `datum discover` return failed
+  checks as part of their report. When a check fails, they print the report
+  (or, for `discover`, the failure class and detail) and exit `1` without an
+  error code.
+- Usage errors, such as a missing argument, print a message and the usage
+  text and exit `1` without an error code.
 
 | Code | When |
 | --- | --- |
