@@ -26,8 +26,9 @@ npm install @kontourai/datum
 Node >= 22. The only runtime dependency is the exact `@kontourai/bearing`
 contract package; Datum imports no AI SDK or schema engine.
 
-> Status: `@kontourai/datum` is published. Hosted release workflows remain
-> manual-only while CI is out of budget; local verification is authoritative.
+> Status: `@kontourai/datum` is published. CI and Docs run on every pull request
+> and push to `main`; the release workflows (Release Please and Publish NPM) are
+> manual `workflow_dispatch` runs. See [Publishing](#publishing-maintainers).
 
 ## Config
 
@@ -381,25 +382,30 @@ topic-keyed registry at [`docs/decisions/`](./docs/decisions/index.md) and
 
 ## Publishing (maintainers)
 
-Release Please, CI, and npm publication are manual-only while hosted CI is out
-of budget. `npm run verify` is the authoritative local gate: it checks the exact
-tarball allowlist, installs that tarball in a clean consumer, imports the public
-API, and runs `datum --help`. `prepublishOnly` enforces the same gate for local
-publication.
+CI (`ci.yml`) and Docs (`docs.yml`) run automatically on every pull request and
+every push to `main`. Releasing is two manual `workflow_dispatch` workflows; no
+event triggers either of them. `npm run verify` is the gate both CI and the
+publish workflow run: it checks the exact tarball allowlist, installs that
+tarball in a clean consumer, imports the public API, and runs `datum --help`.
+`prepublishOnly` enforces the same gate for local publication.
 
-The publish workflow first verifies the `vX.Y.Z` ref, package version, and main
-ancestry in a read-only job. After the Node 22/24 matrix passes, a no-OIDC job
-builds, validates, hashes, and uploads the exact tarball. The protected publish
-job does not check out or execute repository code: it downloads and verifies
-that artifact, fails closed on registry errors except for a structured npm
-`E404`, and publishes it with provenance and lifecycle scripts disabled.
+1. **Release Please** (`release-please.yml`): dispatch it on `main` to open or
+   update the release pull request, which bumps `package.json` and the manifest
+   and updates the changelog. After you merge that pull request, dispatch it
+   again to create the `vX.Y.Z` tag and GitHub release.
+2. **Publish NPM** (`publish-npm.yml`): dispatch it with the `vX.Y.Z` tag as the
+   ref. A read-only preflight job verifies the ref is a `v*` tag, that it matches
+   the `package.json` version, and that the tagged commit is on `main`. After the
+   Node 22/24 `npm run verify` matrix passes, a no-OIDC job builds, validates,
+   hashes, and uploads the exact tarball. The protected publish job (environment
+   `npm-publish`, restricted to `v*` tags) does not check out or execute
+   repository code: it downloads and verifies that artifact, fails closed on
+   registry errors except for a structured npm `E404`, skips versions that are
+   already published, and publishes with provenance and lifecycle scripts
+   disabled. Publishing uses an npm trusted publisher for `kontourai/datum` and
+   `publish-npm.yml`, not a stored token.
 
-Owner activation on npmjs.com: configure a **trusted publisher** for
-`@kontourai/datum` with organization `kontourai`, repository `datum`, workflow
-filename `publish-npm.yml`, environment `npm-publish`, and only the `npm
-publish` allowed action. Enable provenance display. Automatic triggers should
-be restored only with explicit hosted-budget approval; this is tracked in
-issue #17.
+Restoring automatic release triggers is tracked in issue #17.
 
 ## License
 
