@@ -1,5 +1,12 @@
 # @kontourai/datum
 
+[![npm version](https://img.shields.io/npm/v/%40kontourai%2Fdatum)](https://www.npmjs.com/package/@kontourai/datum)
+[![CI](https://github.com/kontourai/datum/actions/workflows/ci.yml/badge.svg)](https://github.com/kontourai/datum/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-kontourai.github.io-blue)](https://kontourai.github.io/datum/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+[Documentation](https://kontourai.github.io/datum/)
+
 Datum is the Kontour portfolio's AI provider/model/role registry. **Define your
 providers, models, and roles once; resolve them everywhere; generate the native
 config every tool wants.** Datum answers a single question — *which backend,
