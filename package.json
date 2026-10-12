@@ -51,7 +51,7 @@
     "@kontourai/bearing": "0.2.0"
   },
   "devDependencies": {
-    "@kontourai/flow-agents": "5.5.0",
+    "@kontourai/flow-agents": "6.5.2",
     "@types/node": "^26.1.2",
     "typescript": "^7.0.2"
   },
