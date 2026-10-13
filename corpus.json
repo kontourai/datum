@@ -1,5 +1,13 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "purpose": "Define model configuration once and resolve the backend, model, and credential reference wherever work runs.",
+  "builtOn": [
+    {
+      "product": "bearing",
+      "via": "@kontourai/bearing",
+      "for": "Validate catalog snapshots and rank inventory-bounded capability-role candidates."
+    }
+  ],
   "product": "datum",
   "title": "Datum",
   "tagline": "The Kontour AI provider, model, and role registry: define them once, then resolve which backend, model, key, and base URL to use. Never makes model calls.",
