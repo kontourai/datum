@@ -36,18 +36,21 @@ Two files, deep-merged. User-level `~/.config/kontour/datum.json` is the base;
 repo-level `.datum/config.json` overlays it and wins per-key; environment
 escape hatches override both.
 
-### The `.kontourai/` vs `.<product>/` convention
+### Repository configuration and runtime records
 
-Kontour portfolio tools use a consistent repo-level directory split:
+Datum reads repository configuration from **`.datum/config.json`**. Commit
+that file with the project; credentials remain references to secrets held
+elsewhere.
 
-- **`.kontourai/`** is what you *ignore* — gitignored, per-machine, disposable
-  runtime state (caches, logs, generated scratch output).
-- **`.<product>/`** is what you *commit* — a product's durable, tracked config
-  directory, owned and versioned like any other source file (precedent:
-  `.veritas/` in the veritas repo).
-
-Datum's repo-level config directory is **`.datum/`**, and the file datum reads
-is **`.datum/config.json`**. Commit it.
+Other Kontour tools also write under **`.kontourai/`**, which is Git-ignored
+but not uniformly disposable. [Flow keeps resumable run state under
+`.kontourai/flow/runs/`](https://github.com/kontourai/flow/blob/a7967a147619fccca83e623daefeaf2366d9995f/README.md#L248)
+and documents backup steps for it, and [Flow Agents keeps in-progress workflow
+state and evidence under
+`.kontourai/flow-agents/`](https://github.com/kontourai/flow-agents/blob/9bfb0bd59c43424cd2d88828d1140bed5d3a48bb/README.md#L31)
+so a session can resume. Do not treat deleting all of `.kontourai/` as routine
+cache cleanup; check the owning product's documentation before removing a
+subdirectory.
 
 ```json
 {
