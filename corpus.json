@@ -187,5 +187,10 @@
       "source": "docs/reference.md#errors"
     }
   ],
-  "exclude": []
+  "exclude": [],
+  "decisions": {
+    "adr": {
+      "dir": "docs/adr"
+    }
+  }
 }
