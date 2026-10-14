@@ -123,8 +123,8 @@ all are explicit, opt-in commands.
   hashes, and transfers the exact artifact. Only then does the
   environment-protected publish job receive OIDC; it checks the transferred
   digest, fails closed on registry errors, and publishes without checking out
-  or executing repository code. CI, Release Please, and publication are
-  manual-only while hosted CI is out of budget.
+  or executing repository code. CI runs on pull requests and pushes to `main`;
+  Release Please and publication are manual-only.
 - **HTTPS Enforcement**: the policy `datum doctor --probe`, `datum
   discover`, `datum test-connection`, and `datum catalog refresh` apply to every outbound request
   before it is sent. `https://` is always allowed; loopback `http://`

@@ -49,7 +49,8 @@ explicit, opt-in commands.
   `npm run …` — that only invokes `package.json` scripts and does not depend on
   which tool installed `node_modules`.
 - `npm run verify` (check:decisions + typecheck + build + tests + exact package
-  and clean-consumer checks — the authoritative local gate while CI is paused)
+  and clean-consumer checks — the same gate the `CI` workflow's `verify` job
+  runs on Node 22 and 24, so run it locally before pushing)
 - `npm test` · `npm run typecheck` · `npm run build`
 - `npm run check:decisions` · `npm run gen:decisions-index`. Decision records
   follow the
@@ -62,9 +63,13 @@ explicit, opt-in commands.
 ## Release Discipline
 
 - `prepublishOnly` must run the complete local verification gate.
-- CI, Release Please, and npm publication remain manual-only while hosted CI is
-  out of budget. Do not treat an installed or enabled workflow as executed
-  evidence.
+- Hosted lanes: `CI` (secret scan, `npm run verify` on Node 22 and 24, and a
+  publish-path dry run) runs on pull requests, pushes to `main`, and manual
+  dispatch; `Docs` runs the docs gate on pull requests, the merge queue, and
+  `main`, and publishes Pages from `main`; `Veritas Advisory Governance` runs on
+  pull requests. Release Please and npm publication are manual-only
+  (`workflow_dispatch`). Do not treat an installed or enabled workflow as
+  executed evidence; read the run.
 - Publication validates one exact tarball, records its hash, and publishes that
   same artifact with lifecycle scripts disabled.
 - Artifact construction and verification run without OIDC. OIDC belongs only
