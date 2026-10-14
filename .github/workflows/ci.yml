@@ -24,6 +24,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          # check:decisions diffs DECISIONS_BASE...HEAD to refuse new numbered
+          # ADRs; that needs the merge base, which a shallow clone lacks.
+          fetch-depth: 0
 
       # Reads the exact pnpm version from package.json's packageManager field.
       - name: Setup pnpm
@@ -41,6 +45,13 @@ jobs:
 
       - name: Verify
         run: npm run verify
+        env:
+          # The ADR freeze in check:decisions compares against this ref. A pull
+          # request checks its own changes against its base; a push to main
+          # checks the pushed range, so an ADR that reached main without a pull
+          # request still turns main red. A manual dispatch sets neither, and
+          # the script falls back to origin/main.
+          DECISIONS_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
 
   # The publish job's environment, exercised on every pull request.
   #

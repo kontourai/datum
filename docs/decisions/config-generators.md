@@ -12,7 +12,7 @@ evidence:
 
 This subject has provenance in frozen ADR history ([0005-generator-not-wrapper.md](../adr/0005-generator-not-wrapper.md), [0006-slice-2-additions.md](../adr/0006-slice-2-additions.md)) but no living
 decision has been ratified yet under the topic-keyed decision registry
-(`context/contracts/decision-registry-contract.md` in kontourai/flow-agents).
+([format](https://github.com/kontourai/corpus/blob/main/docs/decisions.md)).
 This stub records that the subject is open and links the frozen ADR(s) as
 provenance; it is not a decision.
 

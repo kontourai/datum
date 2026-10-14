@@ -51,9 +51,13 @@ explicit, opt-in commands.
 - `npm run verify` (check:decisions + typecheck + build + tests + exact package
   and clean-consumer checks — the authoritative local gate while CI is paused)
 - `npm test` · `npm run typecheck` · `npm run build`
-- `npm run freeze:adrs` (re-run after adding a `docs/adr/` file — prepends the
-  frozen banner and regenerates `docs/adr/index.md`) · `npm run check:decisions` ·
-  `npm run gen:decisions-index`
+- `npm run check:decisions` · `npm run gen:decisions-index`. Decision records
+  follow the
+  [Corpus decision-record format](https://github.com/kontourai/corpus/blob/main/docs/decisions.md);
+  run `npm run gen:decisions-index` after editing one. Numbered ADRs in
+  `docs/adr/` are frozen history; never add one. `npm run check:decisions`
+  validates the records and the index, and refuses ADR files added since
+  `$DECISIONS_BASE` (default `origin/main`; CI sets it to the pull request base).
 
 ## Release Discipline
 
