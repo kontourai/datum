@@ -1,7 +1,7 @@
 ---
 status: current
 subject: Release automation
-decided: 2026-07-18
+decided: 2026-07-28
 evidence:
   - kind: adr
     ref: docs/adr/0006-slice-2-additions.md
@@ -9,6 +9,8 @@ evidence:
     ref: https://github.com/kontourai/datum/issues/16
   - kind: issue
     ref: https://github.com/kontourai/datum/issues/17
+  - kind: pr
+    ref: https://github.com/kontourai/datum/pull/43
 ---
 # Release automation
 
@@ -28,7 +30,8 @@ other registry error, and publishes the validated tarball with provenance and
 lifecycle scripts disabled.
 
 Actions are pinned to reviewed commits and the Release App token is scoped to
-this repository with only contents and pull-request write access. CI, Release
-Please, and publication remain manual-only while hosted CI is out of budget.
-Restoring automatic triggers and configuring the trusted publisher require
-explicit activation rather than being implied by the workflow files.
+this repository with only contents and pull-request write access. CI runs on
+pull requests and pushes to main; Release Please and publication remain
+manual-only. Enabling automatic triggers for them and configuring the trusted
+publisher require explicit activation rather than being implied by the workflow
+files.
