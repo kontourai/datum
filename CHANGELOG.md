@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.1](https://github.com/kontourai/datum/compare/v0.8.0...v0.8.1) (2026-10-16)
+
+
+### Documentation
+
+* adopt docs-kit gate, Pages site, and MCP bundle ([#69](https://github.com/kontourai/datum/issues/69)) ([a936f8c](https://github.com/kontourai/datum/commit/a936f8c5e239a6b19d039e0f7355b5ec6cb981fd))
+* declare Corpus v2 purpose and building blocks ([#76](https://github.com/kontourai/datum/issues/76)) ([de42770](https://github.com/kontourai/datum/commit/de42770b0e732f7851b0fc85ca1085fb3da9b3ac))
+* describe the hosted CI lanes instead of saying CI is paused ([#81](https://github.com/kontourai/datum/issues/81)) ([4ec7cfd](https://github.com/kontourai/datum/commit/4ec7cfd153153850bf6ca43e8649276c44370d07))
+* distinguish runtime records from disposable caches ([33b349f](https://github.com/kontourai/datum/commit/33b349f6c846735bbfcd8387f300063d8bec63bd))
+* distinguish runtime records from disposable caches ([#77](https://github.com/kontourai/datum/issues/77)) ([95f20e7](https://github.com/kontourai/datum/commit/95f20e7bb59a2696a29efc3de819660d0bdd4a68))
+* **readme:** add badges and documentation link ([#71](https://github.com/kontourai/datum/issues/71)) ([9203255](https://github.com/kontourai/datum/commit/9203255a67cff188dc7c3c1a58698d9bfb4d239a))
+* **readme:** describe the real release process ([#72](https://github.com/kontourai/datum/issues/72)) ([68b8d67](https://github.com/kontourai/datum/commit/68b8d6761efed70e58b33861c3e74f42dea6672a))
+
 ## [0.8.0](https://github.com/kontourai/datum/compare/v0.7.0...v0.8.0) (2026-08-23)
 
 
