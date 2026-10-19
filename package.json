@@ -47,10 +47,10 @@
     "docs:build": "npx -y --package=https://codeload.github.com/kontourai/corpus/tar.gz/08c62ccd72880ff4bd4c378ae252ad437b4b4fb5 -- corpus build"
   },
   "dependencies": {
-    "@kontourai/bearing": "0.2.0"
+    "@kontourai/bearing": "0.4.0"
   },
   "devDependencies": {
-    "@kontourai/flow-agents": "5.5.0",
+    "@kontourai/flow-agents": "9.1.0",
     "@kontourai/veritas": "1.11.2",
     "@types/node": "^26.1.2",
     "typescript": "^7.0.2"
