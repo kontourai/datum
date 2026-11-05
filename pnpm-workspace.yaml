@@ -6,6 +6,7 @@
 # with the dep.
 allowBuilds:
   esbuild@0.28.1: true
+  esbuild@0.28.2: true
 
 # Third-party releases must be at least 24 hours old, including during frozen
 # installs: pnpm checks lockfile entries against supply-chain policies.
