@@ -22,7 +22,10 @@
       "source": "docs/reference.md",
       "section": "Reference",
       "covers": [
-        "src/index.ts"
+        "src/index.ts",
+        "src/**",
+        "bin/**",
+        "datum.schema.json"
       ]
     },
     {
