@@ -50,8 +50,8 @@
     "@kontourai/bearing": "0.4.0"
   },
   "devDependencies": {
-    "@kontourai/flow-agents": "9.11.0",
-    "@kontourai/veritas": "1.12.1",
+    "@kontourai/flow-agents": "9.12.0",
+    "@kontourai/veritas": "1.12.2",
     "@types/node": "^26.1.2",
     "typescript": "^7.0.2"
   },
